@@ -153,3 +153,4 @@ def llm_profile(model_name="llama-13b",
 - [Transformer 性能分析理论基础](https://github.com/HarleysZhang/dl_note/blob/main/6-llm_note/transformer_basic/Transformer%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E7%90%86%E8%AE%BA%E5%9F%BA%E7%A1%80.md)
 - [llm_analysis](https://github.com/cli99/llm-analysis)
 - [Transformer Inference Arithmetic](https://kipp.ly/blog/transformer-inference-arithmetic/)
+- [LLM-Viewer](https://github.com/hahnyuan/LLM-Viewer.git)
