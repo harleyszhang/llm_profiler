@@ -1,9 +1,10 @@
 import os
 import importlib
-from hardware_params import hardware_params
-from roofline_model import roofline_analyze
-from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
-from utils import str_number, str_number_time
+from .hardware_params import hardware_params
+from .roofline_model import roofline_analyze
+from .utils import str_number, str_number_time
+
+from transformers import AutoConfig
 import math
 
 ALL_DATA_NAMES = [
@@ -220,6 +221,7 @@ class ModelAnalyzer:
 
         # for attention
         head_size = hidden_size // num_attention_heads
+        
         # for decode
         qk_matmul_OPs = seqlen * head_size * num_attention_heads * batchsize * 2
         sv_matmul_OPs = 1 * head_size * seqlen * num_attention_heads * batchsize * 2
@@ -333,6 +335,7 @@ class ModelAnalyzer:
             seqlen * head_size * seqlen * num_attention_heads * batchsize * 2
         )
         softmax_OPs = batchsize * num_attention_heads * seqlen * seqlen * 5
+        
         if use_flashattention:
             name = f"fused_attention"
             bandwidth, max_OPS, onchip_buffer = self.get_hardware_info()
