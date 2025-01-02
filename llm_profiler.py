@@ -558,20 +558,21 @@ class CountCausalLMLatency(object):
         if self.tp_size == 1:
             return 0
         
-        # \phi is communication data, if tp_size is large enough num_data_per_all_reduce can be 2bsh
+        # 一次 AllReduce 产生的通讯量为 \phi = 2bsh
+        # Self-Attention 和 MLP 部分的计算各需要进行一次 All-Reduce 操作, 即每层做 2 次 All-Reduce操作
+        # if tp_size is large enough num_data_per_all_reduce can be 4bsh
         num_data_per_all_reduce = (
             2 * batch_size * seq_len * self.h * 
             (self.tp_size - 1) / (self.tp_size)
         )
 
-        latency_per_all_reduce = (
-            num_data_per_all_reduce * self.bytes_per_param
+        latency_per_layer_tp_comm = (
+            2 * num_data_per_all_reduce * self.bytes_per_param
             / (self.gpu_intra_node_bandwidth)
         )
-        
         # intra_node_min_message_latency: 节点内连接的最小消息延迟
         return max(
-            latency_per_all_reduce,
+            latency_per_layer_tp_comm,
             self.gpu_config.intra_node_min_message_latency,
         )
         
@@ -594,7 +595,7 @@ class CountCausalLMLatency(object):
             latency_fwd_per_layer_attn
             + latency_fwd_per_layer_mlp
             + 2 * latency_fwd_per_layer_layernorm   # 2 个 layernorm 层
-            + 2 * latency_fwd_per_layer_tp_comm     # 一次 AllReduce 产生的通讯量为 2bsh
+            + latency_fwd_per_layer_tp_comm     # 一次 AllReduce 产生的通讯量为 2bsh, llm 推理每层 layer 需要
         )
     
         dict_latency_per_layer = {
