@@ -1,4 +1,2 @@
 .DS_Store
-__pycache__
-llm_roofline/__pycache__
-./tmp/*
+tmp
