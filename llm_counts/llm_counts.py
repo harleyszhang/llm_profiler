@@ -259,7 +259,7 @@ class LLMProfiler(object):
             # Add nodes and edges
             for node, details in transformer_layer_graph.items():
                 # Add the node with operation and access details
-                label = f"{node}\nOPs: {details['ops']}, Access: {details['access']}, Bound: {details.get('bound', 'N/A')}"
+                label = f"{node}\nOPs: {details['ops']}, Access: {details['access']}, \nBound: {details.get('bound', 'N/A')}"
                 dot.node(node, label=label, fillcolor="lightblue" if "proj" in node else "lightcyan")
 
                 # Add edges based on dependencies

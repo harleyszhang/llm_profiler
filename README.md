@@ -151,13 +151,13 @@ def llm_profile(model_name="llama-13b",
 llama2-70b prefill 阶段
 
 <div align="center">
-<img src="figures/prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="80%" alt="prefill 阶段">
+<img src="figures/prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="50%" alt="prefill 阶段">
 </div>
 
 llama2-70b decode 阶段
 
 <div align="center">
-<img src="figures/decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="80%" alt="decode 阶段">
+<img src="figures/decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="50%" alt="decode 阶段">
 </div>
 
 ## TODO
