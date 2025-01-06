@@ -70,7 +70,7 @@ def llm_profile(model_name="llama-13b",
 ```bash
 -------------------------- LLM main infer config --------------------------
 {   'inference_config': {   'model_name': 'llama2-70b',
-                            'bs': 16,
+                            'bs': 20,
                             'seq_len': 1024,
                             'tp_size': 8,
                             'pp_size': 1,
@@ -83,67 +83,64 @@ def llm_profile(model_name="llama-13b",
                       'gpu_fp16_TFLOPS': '312 TFLOPS'}}
 
 -------------------------- LLM infer performance analysis --------------------------
-{   'model_params': '76.91 G',
-    'model_flops': '2828.24 T',
-    'prefill_first_token_latency': '1.4 s',
-    'decode_per_token_latency': '15.63 ms',
-    'kv_cache_latency': '720.22 us',
-    'total_infer_latency': '17.4 s'}
+{   'model_params': '76.92 G',
+    'model_flops': '3590.32 T',
+    'prefill_first_token_latency': '1.75 s',
+    'decode_per_token_latency': '15.81 ms',
+    'kv_cache_latency': '900.27 us',
+    'total_infer_latency': '17.94 s'}
 
 ---------------------------- LLM Params analysis ----------------------------
-{   'params_per_layer': '956.3 M',
-    'params_mha': '150.99 M',
+{   'params_mha': '150.99 M',
     'params_mlp': '805.31 M',
-    'params_layernorm': '0'}
-{'params_model': '76.91 G'}
+    'params_rmsnorm': '32.77 K'}
+{'params_model': '76.92 G'}
 
 ---------------------------- LLM Flops analysis -----------------------------
-{   'flops_per_layer': '35.19 T',
-    'flops_qkvo_proj': '8.8 T',
-    'flops_mlp': '26.39 T',
-    'flops_rmsnorm': '1.88 G'}
-{'prefill flops_model': '2828.24 T'}
+{   'flops_attention_kernel': '687.7 G',
+    'flops_qkvo_proj': '11.0 T',
+    'flops_mlp': '32.99 T',
+    'flops_rmsnorm': '2.68 G'}
+{'prefill flops_model': '3590.32 T'}
 
 ---------------------------- LLM Memory analysis -----------------------------
 {   'weight_memory_per_gpu': '19.23 GB',
     'prefill_act_memory_bs_1': '33.55 MB',
     'prefill_max_bs': 619,
-    'prefill_act_memory_per_gpu': '536.87 MB'}
+    'prefill_act_memory_per_gpu': '671.09 MB'}
 {   'weight_memory_per_gpu': '19.23 GB',
-    'decode_act_memory_per_gpu': '524.29 KB',
-    'kv_cache_memory_per_gpu': '1.34 GB',
-    'decode_memory_total': '20.57 GB',
+    'decode_act_memory_per_gpu': '655.36 KB',
+    'kv_cache_memory_per_gpu': '1.68 GB',
+    'decode_memory_total': '20.91 GB',
     'decode_max_bs': 247,
     'max_batch_total_tokens': 490680}
 
 -------------------------- LLM Latency analysis --------------------------
-{   'prefill_latency_per_layer': {   'latency_per_layer': '17.4 ms',
-                                         'latency_qkvo_proj': '3.92 ms',
-                                         'latency_mlp': '11.75 ms',
-                                         'latency_rmsnorm': '0.96 us',
-                                         'latency_tp_comm': '3.48 ms'},
-    'prefill_latency_qkvo_proj': '313.25 ms',
-    'prefill_latency_mlp': '939.75 ms',
-    'prefill_latency_rmsnorm': '76.48 us',
-    'prefill_latency_tp_comm': '278.38 ms',
-    'prefill_latency_input_embedding': '2.32 ms',
-    'prefill_latency_output_embedding': '5.97 ms',
-    'prefill_latency': '1.4 s'}
-{   'decode_latency_per_layer': {   'latency_per_layer': '178.83 us',
-                                        'latency_qkvo_proj': '26.97 us',
-                                        'latency_mlp': '143.86 us',
-                                        'latency_rmsnorm': '0.0 us',
-                                        'latency_tp_comm': '16.0 us'},
+{   'prefill_latency_per_layer': {   'latency_qkvo_proj': '4.89 ms',
+                                     'latency_mlp': '14.68 ms',
+                                     'latency_rmsnorm': '7.49 us',
+                                     'latency_tp_comm': '2.17 ms'},
+    'prefill_latency_qkvo_proj': '391.56 ms',
+    'prefill_latency_mlp': '1.17 s',
+    'prefill_latency_rmsnorm': '599.4 us',
+    'prefill_latency_tp_comm': '173.99 ms',
+    'prefill_latency_input_embedding': '2.76 ms',
+    'prefill_latency_output_embedding': '7.46 ms',
+    'prefill_latency': '1.75 s'}
+{   'decode_latency_per_layer': {   'latency_qkvo_proj': '26.98 us',
+                                    'latency_mlp': '143.87 us',
+                                    'latency_rmsnorm': '0.01 us',
+                                    'latency_tp_comm': '8.0 us'},
     'decode_latency_qkvo_proj': '2.16 ms',
     'decode_latency_mlp': '11.51 ms',
-    'decode_latency_rmsnorm': '0.07 us',
-    'decode_latency_tp_comm': '1.28 ms',
+    'decode_latency_rmsnorm': '0.59 us',
+    'decode_latency_tp_comm': '640.0 us',
     'decode_latency_input_embedding': '592.88 us',
-    'decode_latency_output_embedding': '5.83 us',
-    'kv_cache_avg_latency': '720.22 us',
-    'kv_cache_peak_latency': '959.98 us',
-    'decode_avg_latency': '15.63 ms',
-    'decode_peak_latency': '15.87 ms'}
+    'decode_latency_output_embedding': '7.29 us',
+    'kv_cache_avg_latency': '900.27 us',
+    'kv_cache_peak_latency': '1.2 ms',
+    'decode_avg_latency': '15.81 ms',
+    'decode_peak_latency': '16.11 ms'}
 ```
 
 ## 模型结构可视化
