@@ -146,6 +146,16 @@ def llm_profile(model_name="llama-13b",
     'decode_peak_latency': '15.87 ms'}
 ```
 
+## 模型结构可视化
+
+llama2-70b prefill 阶段
+
+![llama2-70b prefill 阶段](figures/prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png)
+
+llama2-70b decode 阶段
+
+![llama2-70b decode 阶段](./figures/decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png)
+
 ## TODO
 - 支持训练模型理论性能分析
 - 支持 零推理模式等理论性能分析

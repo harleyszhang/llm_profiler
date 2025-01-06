@@ -230,25 +230,25 @@ class LLMProfiler(object):
             res = results[stage]
             # Define the transformer layer graph with operation and memory info
             transformer_layer_graph = {
-                "input": {"dependencies": [], "ops": "0", "access": "0"},
-                "attn_norm": {"dependencies": ["input"], "ops": res["attn_norm"]["flops"], "access": res["attn_norm"]["memory_access"]},
-                "q_proj": {"dependencies": ["attn_norm"], "ops": res["q_proj"]["flops"], "access": res["q_proj"]["memory_access"]},
-                "k_proj": {"dependencies": ["attn_norm"], "ops": res["k_proj"]["flops"], "access": res["k_proj"]["memory_access"]},
-                "v_proj": {"dependencies": ["attn_norm"], "ops": res["v_proj"]["flops"], "access": res["v_proj"]["memory_access"]},
-                "qk_matmul": {"dependencies": ["q_proj", "k_proj"], "ops": res["qk_matmul"]["flops"], "access": res["qk_matmul"]["memory_access"]},
-                "softmax": {"dependencies": ["qk_matmul"], "ops": res["softmax"]["flops"], "access": res["softmax"]["memory_access"]},
-                "sv_matmul": {"dependencies": ["softmax", "v_proj"], "ops": res["sv_matmul"]["flops"], "access": res["sv_matmul"]["memory_access"]},
+                "input": {"dependencies": [], "ops": "0", "access": "0", "bound": "N/A"},
+                "attn_norm": {"dependencies": ["input"], "ops": res["attn_norm"]["flops"], "access": res["attn_norm"]["memory_access"], "bound": res["attn_norm"]["bound"]},
+                "q_proj": {"dependencies": ["attn_norm"], "ops": res["q_proj"]["flops"], "access": res["q_proj"]["memory_access"], "bound": res["q_proj"]["bound"]},
+                "k_proj": {"dependencies": ["attn_norm"], "ops": res["k_proj"]["flops"], "access": res["k_proj"]["memory_access"], "bound": res["k_proj"]["bound"]},
+                "v_proj": {"dependencies": ["attn_norm"], "ops": res["v_proj"]["flops"], "access": res["v_proj"]["memory_access"], "bound": res["v_proj"]["bound"]},
+                "qk_matmul": {"dependencies": ["q_proj", "k_proj"], "ops": res["qk_matmul"]["flops"], "access": res["qk_matmul"]["memory_access"], "bound": res["qk_matmul"]["bound"]},
+                "softmax": {"dependencies": ["qk_matmul"], "ops": res["softmax"]["flops"], "access": res["softmax"]["memory_access"], "bound": res["softmax"]["bound"]},
+                "sv_matmul": {"dependencies": ["softmax", "v_proj"], "ops": res["sv_matmul"]["flops"], "access": res["sv_matmul"]["memory_access"], "bound": res["sv_matmul"]["bound"]},
                 
-                "out_proj": {"dependencies": ["sv_matmul"], "ops": res["out_proj"]["flops"], "access": res["out_proj"]["memory_access"]},
-                "attn_add": {"dependencies": ["input", "out_proj"], "ops": res["attn_add"]["flops"], "access": res["attn_add"]["memory_access"]},
+                "out_proj": {"dependencies": ["sv_matmul"], "ops": res["out_proj"]["flops"], "access": res["out_proj"]["memory_access"], "bound": res["out_proj"]["bound"]},
+                "attn_add": {"dependencies": ["input", "out_proj"], "ops": res["attn_add"]["flops"], "access": res["attn_add"]["memory_access"], "bound": res["attn_add"]["bound"]},
                 
-                "mlp_norm": {"dependencies": ["attn_add"], "ops": res["mlp_norm"]["flops"], "access": res["mlp_norm"]["memory_access"]},
-                "gate_proj": {"dependencies": ["mlp_norm"], "ops": res["gate_proj"]["flops"], "access": res["gate_proj"]["memory_access"]},
-                "up_proj": {"dependencies": ["mlp_norm"], "ops": res["up_proj"]["flops"], "access": res["up_proj"]["memory_access"]},
-                "mlp_silu_dot": {"dependencies": ["up_proj", "gate_proj"], "ops": res["mlp_silu_dot"]["flops"], "access": res["mlp_silu_dot"]["memory_access"]},
-                "down_proj": {"dependencies": ["mlp_silu_dot"], "ops": res["down_proj"]["flops"], "access": res["down_proj"]["memory_access"]},
+                "mlp_norm": {"dependencies": ["attn_add"], "ops": res["mlp_norm"]["flops"], "access": res["mlp_norm"]["memory_access"], "bound": res["mlp_norm"]["bound"]},
+                "gate_proj": {"dependencies": ["mlp_norm"], "ops": res["gate_proj"]["flops"], "access": res["gate_proj"]["memory_access"], "bound": res["gate_proj"]["bound"]},
+                "up_proj": {"dependencies": ["mlp_norm"], "ops": res["up_proj"]["flops"], "access": res["up_proj"]["memory_access"], "bound": res["up_proj"]["bound"]},
+                "mlp_silu_dot": {"dependencies": ["up_proj", "gate_proj"], "ops": res["mlp_silu_dot"]["flops"], "access": res["mlp_silu_dot"]["memory_access"], "bound": res["mlp_silu_dot"]["bound"]},
+                "down_proj": {"dependencies": ["mlp_silu_dot"], "ops": res["down_proj"]["flops"], "access": res["down_proj"]["memory_access"], "bound": res["down_proj"]["bound"]},
                 
-                "mlp_add": {"dependencies": ["attn_add", "down_proj"], "ops": res["mlp_add"]["flops"], "access": res["mlp_add"]["memory_access"]},
+                "mlp_add": {"dependencies": ["attn_add", "down_proj"], "ops": res["mlp_add"]["flops"], "access": res["mlp_add"]["memory_access"], "bound": res["mlp_add"]["bound"]},
                 
                 "output": {"dependencies": ["mlp_add"], "ops": "0", "access": "0"},
             }
@@ -259,7 +259,7 @@ class LLMProfiler(object):
             # Add nodes and edges
             for node, details in transformer_layer_graph.items():
                 # Add the node with operation and access details
-                label = f"{node}\nOPs: {details['ops']}, Access: {details['access']}"
+                label = f"{node}\nOPs: {details['ops']}, Access: {details['access']}, Bound: {details.get('bound', 'N/A')}"
                 dot.node(node, label=label, fillcolor="lightblue" if "proj" in node else "lightcyan")
 
                 # Add edges based on dependencies
