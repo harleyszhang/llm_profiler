@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
     model_id = "huggyllama/llama-13b"
     hardware = "nvidia_A100_40G"
-    from model_analyzer.model_analyzer import ModelAnalyzer
+    from tmp.model_analyzer import ModelAnalyzer
     analyzer = ModelAnalyzer(model_id, hardware, "llm_roofline/configs/Llama.py")
     results = analyzer.analyze(batchsize=b, seqlen=s, use_flashattention=True)
     total_flops = results["total_results"]["prefill"]["OPs"]
