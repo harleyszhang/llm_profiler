@@ -1,4 +1,4 @@
-from constants import *
+from llm_counts.constants import *
 
 def print_list(list):
     """print one-dimensional list
@@ -17,40 +17,68 @@ def get_dict_depth(d, depth=0):
 
     return max(get_dict_depth(v, depth + 1) for v in d.values())
 
-def latency_to_string(latency_in_s, precision=2):
+def latency_to_string(latency_in_s, precision=2, return_type='string'):
     if latency_in_s is None:
-        return "None"
+        return "None" if return_type == 'string' else None
+    
     day = 24 * 60 * 60
     hour = 60 * 60
     minute = 60
     ms = 1 / 1000
     us = 1 / 1000000
+
     if latency_in_s // day > 0:
-        return str(round(latency_in_s / day, precision)) + " days"
+        value = round(latency_in_s / day, precision)
+        unit = "days"
     elif latency_in_s // hour > 0:
-        return str(round(latency_in_s / hour, precision)) + " hours"
+        value = round(latency_in_s / hour, precision)
+        unit = "hours"
     elif latency_in_s // minute > 0:
-        return str(round(latency_in_s / minute, precision)) + " minutes"
+        value = round(latency_in_s / minute, precision)
+        unit = "minutes"
     elif latency_in_s > 1:
-        return str(round(latency_in_s, precision)) + " s"
+        value = round(latency_in_s, precision)
+        unit = "s"
     elif latency_in_s > ms:
-        return str(round(latency_in_s / ms, precision)) + " ms"
+        value = round(latency_in_s / ms, precision)
+        unit = "ms"
     else:
-        return str(round(latency_in_s / us, precision)) + " us"
-    
-def num_to_string(num, precision=2):
+        value = round(latency_in_s / us, precision)
+        unit = "us"
+
+    if return_type == 'string':
+        return f"{value} {unit}"
+    elif return_type == 'float':
+        return value
+    else:
+        return (value, unit)
+
+def num_to_string(num, precision=2, return_type='string'):
     if num is None:
-        return "None"
+        return "None" if return_type == 'string' else None
+
     if num // 10**12 > 0:
-        return str(round(num / 10.0**12, precision)) + " T"
+        value = round(num / 10.0**12, precision)
+        unit = "T"
     elif num // 10**9 > 0:
-        return str(round(num / 10.0**9, precision)) + " G"
+        value = round(num / 10.0**9, precision)
+        unit = "G"
     elif num // 10**6 > 0:
-        return str(round(num / 10.0**6, precision)) + " M"
+        value = round(num / 10.0**6, precision)
+        unit = "M"
     elif num // 10**3 > 0:
-        return str(round(num / 10.0**3, precision)) + " K"
+        value = round(num / 10.0**3, precision)
+        unit = "K"
     else:
-        return str(num)
+        value = num
+        unit = ""
+
+    if return_type == 'string':
+        return f"{value} {unit}".strip()
+    elif return_type == 'float':
+        return value
+    else:
+        return (value, unit)
 
 def get_readable_summary_dict(summary_dict: dict, title="Summary") -> str:
     log_str = f"\n{title.center(PRINT_LINE_WIDTH, '-')}\n"

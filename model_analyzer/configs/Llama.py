@@ -15,6 +15,7 @@ def get_num_hidden_layers(model_params):
     return getattr(model_params, "num_hidden_layers")
 
 def get_intermediate_size(model_params):
+    # 用于获取对象的指定属性值。
     return getattr(model_params, "intermediate_size")
 
 def get_vocab_size(model_params):

@@ -2,11 +2,12 @@
 # Description : gpu, model, Parallelism, data, train and inference config definition
 
 import math, json
-from constants import *
+from llm_counts.constants import *
 from dataclasses import dataclass
 from enum import Enum
 from functools import total_ordering
-
+from transformers import AutoConfig
+import os
 
 class ActivationRecomputation(Enum):
     NONE = 0
@@ -63,14 +64,15 @@ class GPUEfficiencyConfig:
 @dataclass
 class InferenceConfig:
     """Inference configuration dataclass."""
-    batch_size_per_gpu: int = None      # batch size
+    bs: int = None      # batch size
     seq_len: int = 522         # input sequence length
     generate_len: int = 1526    # number of tokens to generate
     context_len: int = None     # context length
     use_kv_cache: bool = True   # whether to use key/value cache
     bytes_per_param: int = BYTES_FP16  # model weight bytes
-    layernorm_dtype_bytes: int = BYTES_FP16  # layernorm data type bytes
+    act_dtype_bytes: int = BYTES_FP16 # activation data type bytes
     kv_cache_dtype_bytes: int = BYTES_FP16   # key/value cache data type bytes
+
     def __post_init__(self):
         if self.context_len is None:
             self.context_len = self.seq_len + self.generate_len
@@ -88,22 +90,53 @@ class ParallelismConfig:
 @dataclass
 class ModelConfig:
     num_layers: int  # number of transformer layers (blocks)
-    n_head: int      # number of attention heads 
-    hidden_dim: int  # hidden dimension
+    num_heads: int      # number of attention heads 
+    hidden_size: int  # hidden dimension
     vocab_size: int  # vocabulary size
     num_key_value_heads: int = None 
     max_seq_len: int = None   # max sequence length
-    ffn_embed_dim: int = None # hidden dimension of FFN, default to 4 * hidden_dim
+    intermediate_size: int = None # hidden dimension of FFN, default to 4 * hidden_size
     model_type: str = None    # model type as tagged on Hugging Face (e.g., gpt2, opt, llama.)
     model_name: str = None    # model name as tagged on Hugging Face (e.g., gpt2-xl, opt, llama-13b.)
     
     def __post_init__(self):
+        self.head_dim = self.hidden_size // self.num_heads
+
         if self.num_key_value_heads is None: # 如果不存在，设置默认值
-            self.num_key_value_heads = self.n_head 
+            self.num_key_value_heads = self.num_heads 
             
-        if self.ffn_embed_dim is None:
-            self.ffn_embed_dim = self.hidden_dim * 4
+        if self.intermediate_size is None:
+            self.intermediate_size = self.hidden_size * 4
+            self.intermediate_size = self.intermediate_size
+    
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path: str, trust_remote_code: bool = True):
+        """
+        Load a Hugging Face model configuration and map it to ModelConfig.
+
+        Args:
+            pretrained_model_name_or_path (str): Path or name of the pretrained model.
+            trust_remote_code (bool): Whether to trust remote code for custom models.
         
+        Returns:
+            ModelConfig: An instance of the custom ModelConfig class.
+        """
+        # Load the Hugging Face configuration
+        hf_config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=trust_remote_code)
+
+        # Create a ModelConfig instance by mapping the fields
+        return cls(
+            num_layers=hf_config.num_hidden_layers,
+            num_heads=hf_config.num_attentionum_headss,
+            hidden_size=hf_config.hidden_size,
+            vocab_size=hf_config.vocab_size,
+            num_key_value_heads=getattr(hf_config, "num_key_value_heads", None),
+            max_seq_len=hf_config.max_position_embeddings,
+            intermediate_size=hf_config.intermediate_size,
+            model_type=hf_config.model_type,
+            model_name=hf_config.name_or_path
+        )
+     
 @dataclass
 class GPUConfig:
     # 1, gpu 型号和显存大小
@@ -123,29 +156,32 @@ class GPUConfig:
     peak_int8_TFLOPS: float = None  # peak Tensor TFLOPS for INT8
     peak_int4_TFLOPS: float = None  # peak Tensor TFLOPS for INT4
 
-    FLOPS_EFFICIENCY = 0.7
+    FLOPS_EFFICIENCY = 0.9
     HBM_MEMORY_EFFICIENCY = 0.9
-    
+    INTRA_NODE_BANDWIDTH_EFFICIENCY = 0.9
     def __post_init__(self):
-        """object creation of DataClass starts with __init__() (constructor-calling) and 
-        ends with __post__init__() (post-init processing).
         """
-        if self.peak_fp32_TFLOPS is None:
-            self.peak_fp32_TFLOPS =  math.ceil(self.peak_fp16_TFLOPS / 2)
-        if self.peak_int8_TFLOPS is None:
+        Post-initialization processing to compute missing values and apply efficiencies.
+        """
+        # Ensure FP32 TFLOPS is calculated if missing
+        if self.peak_fp32_TFLOPS is None and self.peak_fp16_TFLOPS is not None:
+            self.peak_fp32_TFLOPS = self.peak_fp16_TFLOPS / 2
+
+        # Ensure INT8 and INT4 TFLOPS are calculated if missing
+        if self.peak_int8_TFLOPS is None and self.peak_fp16_TFLOPS is not None:
             self.peak_int8_TFLOPS = 2 * self.peak_fp16_TFLOPS
-        if self.peak_int4_TFLOPS is None:
+        if self.peak_int4_TFLOPS is None and self.peak_fp16_TFLOPS is not None:
             self.peak_int4_TFLOPS = 4 * self.peak_fp16_TFLOPS
-            
+
+        # Apply FLOPS efficiency and round to nearest integer
         if self.FLOPS_EFFICIENCY:
-            self.peak_fp32_TFLOPS *= self.FLOPS_EFFICIENCY
-            self.peak_fp16_TFLOPS *= self.FLOPS_EFFICIENCY
-            self.peak_int8_TFLOPS *= self.FLOPS_EFFICIENCY
-            self.peak_int4_TFLOPS *= self.FLOPS_EFFICIENCY
-        if self.HBM_MEMORY_EFFICIENCY:
-            self.hbm_bandwidth_in_GB_per_sec *= self.HBM_MEMORY_EFFICIENCY
-            self.intra_node_bandwidth_in_GB_per_sec *= self.HBM_MEMORY_EFFICIENCY
+            self.actual_peak_fp32_TFLOPS = math.ceil(self.peak_fp32_TFLOPS * self.FLOPS_EFFICIENCY)
+            self.actual_peak_fp16_TFLOPS = math.ceil(self.peak_fp16_TFLOPS * self.FLOPS_EFFICIENCY)
+            self.actual_peak_int8_TFLOPS = math.ceil(self.peak_int8_TFLOPS * self.FLOPS_EFFICIENCY)
+            self.actual_peak_int4_TFLOPS = math.ceil(self.peak_int4_TFLOPS * self.FLOPS_EFFICIENCY)
+
 class LLMConfigs(object):
+    """LLMConfigs is a dataclass that contains all the configurations for the LLM model."""
     def __init__(self, gpu_config: GPUConfig,
                  model_config: ModelConfig,
                  parallelism_config: ParallelismConfig = ParallelismConfig(),
@@ -160,28 +196,30 @@ class LLMConfigs(object):
       
 def get_model_and_gpu_config_by_name(model_name="llama-13b", gpu_name="v100-pcie-32gb") -> dict:
     """Read model and gpu configs from a json file."""
-    config_files = ["configs/model_configs.json", "configs/gpu_configs.json"]
-    model_config, gpu_config = {}, {}
+    current_dir = os.path.dirname(__file__)
+    model_config_path = os.path.join(current_dir, "configs/model_configs.json")
+    gpu_config_path = os.path.join(current_dir, "configs/gpu_configs.json")
     
-    for config_filename in config_files:
-        with open(config_filename, "r") as f:
-            config_json = json.load(f)
-            
-            if "model" in config_filename:
-                assert model_name in config_json, f"model name {model_name} not found in {config_filename}"
-                config_dict = config_json[model_name]
-                model_config = ModelConfig(**config_dict)
-            
-            elif "gpu" in config_filename:
-                assert gpu_name in config_json, f"gpu name {gpu_name} not found in {config_filename}"
-                config_dict = config_json[gpu_name]
-                gpu_config = GPUConfig(**config_dict)
-            else:
-                assert False, f"unknown config type when reading: {type}"
+    with open(model_config_path, "r") as f:
+        config_json = json.load(f) # 类似于 dict 类型
+        if model_name in config_json:
+            print(f"model name {model_name} is found in {model_config_path}")
+            config_dict = config_json[model_name]
+            model_config = ModelConfig(**config_dict)
+        else:
+            print(f"model name {model_name} is not found in {model_config_path} so need to apply transformers AutoConfig")
+            # 加载模型配置
+            model_config = ModelConfig.from_pretrained("meta-llama/Llama-3.2-1B")
+    
+    with open(gpu_config_path, "r") as f:
+        config_json = json.load(f) # 类似于 dict 类型
+        config_dict = config_json[gpu_name]
+        assert gpu_name in config_json, f"gpu name {gpu_name} not found in {gpu_config_path}"
+        gpu_config = GPUConfig(**config_dict)
             
     return model_config, gpu_config
 
-def get_TFLOPS_per_gpu(gpu_config: GPUConfig, data_type="fp16", flops_efficiency=1.0) -> float:
+def get_TFLOPS_per_gpu(gpu_config: GPUConfig, data_type="fp16", flops_efficiency=FLOPS_EFFICIENCY) -> float:
     """Get the expected TFLOPS per GPU for the specified data type
     configuration/GPU (adjusted by flops_efficiency)
 
@@ -194,20 +232,20 @@ def get_TFLOPS_per_gpu(gpu_config: GPUConfig, data_type="fp16", flops_efficiency
         gemm_TFOPS = gpu_config.peak_fp16_TFLOPS
     else:
         print("weight_bits and activation_bits must be 8, or 16!")
-    
+
     return gemm_TFOPS * flops_efficiency
 
-def get_gpu_hbm_bandwidth(gpu_config: GPUConfig, hbm_memory_efficiency=1.0) -> float:
+def get_gpu_hbm_bandwidth(gpu_config: GPUConfig, hbm_memory_efficiency=HBM_MEMORY_EFFICIENCY) -> float:
     return (
         gpu_config.hbm_bandwidth_in_GB_per_sec * hbm_memory_efficiency
     )
     
-def get_intra_node_bandwidth(gpu_config: GPUConfig, intra_node_memory_efficiency=1.0) -> float:
+def get_intra_node_bandwidth(gpu_config: GPUConfig, intra_node_memory_efficiency=INTRA_NODE_MEMORY_EFFICIENCY) -> float:
     return (
         gpu_config.intra_node_bandwidth_in_GB_per_sec * intra_node_memory_efficiency
     )
 
-def get_inter_node_bandwidth(gpu_config: GPUConfig, inter_node_memory_efficiency=1.0) -> float:
+def get_inter_node_bandwidth(gpu_config: GPUConfig, inter_node_memory_efficiency=INTER_NODE_MEMORY_EFFICIENCY) -> float:
     return (
         gpu_config.inter_node_bandwidth_in_GB_per_sec * inter_node_memory_efficiency
     )

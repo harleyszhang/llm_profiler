@@ -265,6 +265,7 @@ class ModelAnalyzer:
                 * kv_byte,
                 store_kv_cache=0,
             )
+            
             name = f"sv_matmul"
             self._analyze_to_results(
                 "decode",
@@ -315,6 +316,7 @@ class ModelAnalyzer:
                 load_kv_cache=0,
                 store_kv_cache=0,
             )
+        
         for name in ["mlp_act"]:
             self._analyze_to_results(
                 "decode",
@@ -401,6 +403,7 @@ class ModelAnalyzer:
                 load_kv_cache=0,
                 store_kv_cache=0,
             )
+        
         for name in ["attn_norm", "mlp_norm"]:
             self._analyze_to_results(
                 "prefill",
@@ -412,6 +415,7 @@ class ModelAnalyzer:
                 load_kv_cache=0,
                 store_kv_cache=0,
             )
+        
         for name in ["attn_add", "mlp_add"]:
             self._analyze_to_results(
                 "prefill",
@@ -423,6 +427,7 @@ class ModelAnalyzer:
                 load_kv_cache=0,
                 store_kv_cache=0,
             )
+        
         for name in ["mlp_act"]:
             self._analyze_to_results(
                 "prefill",

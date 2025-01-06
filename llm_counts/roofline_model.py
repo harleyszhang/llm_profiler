@@ -12,7 +12,7 @@ A100_SXM_GPU = {"fp16_tflops": 312, "hbm_bw": 2.039}
 H100_SXM_GPU = {"fp16_tflops": 989, "hbm_bw": 3.35} # 不开启稀疏计算
 H20_SXM_GPU = {"fp16_tflops": 148, "hbm_bw": 4.0}
 
-def roofline_analyze(peak_flops, bandwidth, flops, memory_access_bytes):
+def roofline_analysis(peak_flops, bandwidth, flops, memory_access_bytes):
     """
     Analyzes the roofline model and returns the arithmetic intensity, attainable FLOPs,
     and the bounding factor (memory or compute).
@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
     model_id = "huggyllama/llama-13b"
     hardware = "nvidia_A100_40G"
-    from llm_roofline.model_analyzer import ModelAnalyzer
+    from model_analyzer.model_analyzer import ModelAnalyzer
     analyzer = ModelAnalyzer(model_id, hardware, "llm_roofline/configs/Llama.py")
     results = analyzer.analyze(batchsize=b, seqlen=s, use_flashattention=True)
     total_flops = results["total_results"]["prefill"]["OPs"]
