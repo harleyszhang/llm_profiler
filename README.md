@@ -150,11 +150,15 @@ def llm_profile(model_name="llama-13b",
 
 llama2-70b prefill 阶段
 
-![llama2-70b prefill 阶段](figures/prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png)
+<div align="center">
+<img src="figures/prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="80%" alt="prefill 阶段">
+</div>
 
 llama2-70b decode 阶段
 
-![llama2-70b decode 阶段](./figures/decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png)
+<div align="center">
+<img src="figures/decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="80%" alt="decode 阶段">
+</div>
 
 ## TODO
 - 支持训练模型理论性能分析
