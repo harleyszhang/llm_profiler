@@ -1,4 +1,4 @@
 .DS_Store
 __pycache__
 llm_roofline/__pycache__
-.model_analyzer
+model_analyzer
