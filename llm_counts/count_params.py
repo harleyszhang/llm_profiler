@@ -1,5 +1,5 @@
-from ..config import ModelConfig
-from ..constants import *
+from .utils.config import ModelConfig
+from .utils.constants import *
 
 class CountCausalLMParams(object):
     def __init__(self, model_config: ModelConfig) -> None:
@@ -59,7 +59,7 @@ class CountCausalLMParams(object):
         Returns:
             int: the number of parameters per layer in the two layer normalization module
         """
-        return self.hidden_size * dtype
+        return 2 * self.hidden_size
     
     def count_params_per_layer(self, ln_ignore=False) -> tuple:
         """Get the number of params per layer in the transformer decoder blocks,
@@ -73,8 +73,9 @@ class CountCausalLMParams(object):
         """
         params_per_layer_mha = self.count_params_per_layer_mha()
         params_per_layer_mlp = self.count_params_per_layer_mlp()
-        params_per_layer_rn = 0 if ln_ignore else 2 * self.count_params_per_layer_rn()
-        
+        params_per_layer_rn = 0 if ln_ignore else self.count_params_per_layer_rn()
+        params_input_embedding = self.count_params_embedding()
+
         params_per_layer = (
             params_per_layer_mha
             + params_per_layer_mlp
@@ -82,9 +83,11 @@ class CountCausalLMParams(object):
         )
                 
         dict_params_per_layer = {
-            "params_mha": params_per_layer_mha,
-            "params_mlp": params_per_layer_mlp,
-            "params_rmsnorm": params_per_layer_rn,
+            "qkvo_proj": params_per_layer_mha,
+            "mlp": params_per_layer_mlp,
+            "rmsnorm": params_per_layer_rn,
+            "input_embedding": params_input_embedding,
+            "output_embedding": params_input_embedding,
         }
         
         return params_per_layer, dict_params_per_layer

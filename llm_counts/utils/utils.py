@@ -1,4 +1,4 @@
-from llm_counts.constants import *
+from .constants import *
 
 def print_list(list):
     """print one-dimensional list

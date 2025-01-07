@@ -2,7 +2,7 @@
 # Description : gpu, model, Parallelism, data, train and inference config definition
 
 import math, json
-from llm_counts.constants import *
+from .constants import *
 from dataclasses import dataclass
 from enum import Enum
 from functools import total_ordering
@@ -71,7 +71,7 @@ class InferenceConfig:
     use_kv_cache: bool = True   # whether to use key/value cache
     bytes_per_param: int = BYTES_FP16  # model weight bytes
     act_dtype_bytes: int = BYTES_FP16 # activation data type bytes
-    kv_cache_dtype_bytes: int = BYTES_FP16   # key/value cache data type bytes
+    kv_cache_bytes: int = BYTES_FP16   # key/value cache data type bytes
 
     def __post_init__(self):
         if self.context_len is None:
@@ -197,8 +197,8 @@ class LLMConfigs(object):
 def get_model_and_gpu_config_by_name(model_name="llama-13b", gpu_name="v100-pcie-32gb") -> dict:
     """Read model and gpu configs from a json file."""
     current_dir = os.path.dirname(__file__)
-    model_config_path = os.path.join(current_dir, "configs/model_configs.json")
-    gpu_config_path = os.path.join(current_dir, "configs/gpu_configs.json")
+    model_config_path = os.path.join(current_dir, "../configs/model_configs.json")
+    gpu_config_path = os.path.join(current_dir, "../configs/gpu_configs.json")
     
     with open(model_config_path, "r") as f:
         config_json = json.load(f) # 类似于 dict 类型

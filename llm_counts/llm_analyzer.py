@@ -1,10 +1,10 @@
-from ..config import LLMConfigs
-from ..constants import BYTES_FP16
-from ..config import *
-from ..roofline_model import roofline_analysis
-from ..utils import num_to_string
+from .utils.config import LLMConfigs
+from .utils.constants import BYTES_FP16
+from .utils.config import *
+from .roofline_model import roofline_analysis
+from .utils.utils import num_to_string
 
-class CountCausalLMMemoryAccess(object):
+class LLMAnalyzer(object):
     """Count memory access of the model and layers."""
     def __init__(self, llm_configs: LLMConfigs) -> None:
         self.model_config = llm_configs.model_config
@@ -56,15 +56,15 @@ class CountCausalLMMemoryAccess(object):
 
         self.results[stage][kernel_name] = {
             "flops": num_to_string(flops),
-            "memory_access": num_to_string(memory_access),
+            "memory_access": f"{num_to_string(memory_access)}B",
             "arithmetic_intensity": int(arithmetic_intensity),
             "performance": num_to_string(performance),
             "bound": bound,
-            "load_weight": num_to_string(load_weight),
+            "load_weight": f"{num_to_string(load_weight)}B",
             "load_act": num_to_string(load_act),
             "store_act": num_to_string(store_act),
             "load_kv_cache": num_to_string(load_kv_cache),
-            "store_kv_cache": num_to_string(store_kv_cache),
+            "store_kv_cache": num_to_string(store_kv_cache), 
         }
         
         return self.results
@@ -170,5 +170,3 @@ class CountCausalLMMemoryAccess(object):
         # 返回累积分析结果
         return self.results
         # total_results = {"decode": {}, "prefill": {}}
-
-

@@ -1,139 +1,21 @@
 {
-    "opt-1.3b":{
-        "num_layers": 24,
-        "num_heads": 32,
-        "hidden_size": 2048,
-        "vocab_size": 50272,
-        "max_seq_len": 2048,
-        "intermediate_size": 8192,
-        "model_type": "opt",
-        "model_name": "opt-1.3b"
-    },
-    "opt-6.7b":{
-        "num_layers": 32,
-        "num_heads": 32,
-        "hidden_size": 4096,
-        "vocab_size": 50272,
-        "max_seq_len": 2048,
-        "intermediate_size": 16384,
-        "model_type": "opt",
-        "model_name": "opt-6.7b"
-    },
-    "opt-13b":{
-        "num_layers": 40,
-        "num_heads": 40,
-        "hidden_size": 5120,
-        "vocab_size": 50272,
-        "max_seq_len": 2048,
-        "intermediate_size": 20480,
-        "model_type": "opt",
-        "model_name": "opt-13b"
-    },
-    "opt-66b":{
-        "num_layers": 64,
-        "num_heads": 72,
-        "hidden_size": 9216,
-        "vocab_size": 50272,
-        "max_seq_len": 2048,
-        "intermediate_size": 36864,
-        "model_type": "opt",
-        "model_name": "opt-66b"
-    },
-    "opt-175b":{
-        "max_seq_len": 2048,
-        "num_layers": 96,
-        "num_heads": 96,
-        "hidden_size": 12288,
-        "vocab_size": 50272,
-        "intermediate_size": 49152,
-        "model_type": "opt",
-        "model_name": "opt-175b"
-    },
-    "gpt2":{
-        "num_layers": 12,
-        "num_heads": 12,
-        "hidden_size": 768,
-        "vocab_size": 50257,
-        "max_seq_len": 1024,
-        "intermediate_size": 3072,
-        "model_type": "gpt2",
-        "model_name": "gpt2"
-    },
-    "gpt2-medium":{
-        "num_layers": 24,
-        "num_heads": 16,
-        "hidden_size": 1024,
-        "vocab_size": 50257,
-        "max_seq_len": 1024,
-        "intermediate_size": 4096,
-        "model_type": "gpt2",
-        "model_name": "gpt2-medium"
-    },
-    "gpt2-large":{
-        "num_layers": 36,
-        "num_heads": 20,
-        "hidden_size": 1280,
-        "vocab_size": 50257,
-        "max_seq_len": 1024,
-        "intermediate_size": 5120,
-        "model_type": "gpt2",
-        "model_name": "gpt2-large"
-    },
-    "gpt2-xl":{
-        "num_layers": 48,
-        "num_heads": 25,
-        "hidden_size": 1600,
-        "vocab_size": 50257,
-        "max_seq_len": 1024,
-        "intermediate_size": 6400,
-        "model_type": "gpt2",
-        "model_name": "gpt2-xl"
-    },
-    "bloom-560m":{
-        "num_layers": 24,
-        "num_heads": 16,
-        "hidden_size": 1024,
-        "vocab_size": 250880,
-        "max_seq_len": null,
-        "intermediate_size": 4096,
-        "model_type": "bloom",
-        "model_name": "bloom-560m"
-    },
-    "bloom-7b":{
-        "num_layers": 30,
-        "num_heads": 32,
-        "hidden_size": 4096,
-        "vocab_size": 250880,
-        "max_seq_len": null,
-        "intermediate_size": 16384,
-        "model_type": "bloom",
-        "model_name": "bloom-7b"
-    },
-    "bloom-175b":{
-        "num_layers": 96,
-        "num_heads": 96,
-        "hidden_size": 12288,
-        "vocab_size": 250880,
-        "intermediate_size": 49152,
-        "model_type": "bloom",
-        "model_name": "bloom-175b"
-    },
     "llama-7b":{
         "num_layers": 32,
         "num_heads": 32,
         "hidden_size": 4096,
+        "intermediate_size": 11008,
         "vocab_size": 32000,
         "max_seq_len": 2048,
-        "intermediate_size": 16384,
-        "model_type": "llama"
+        "model_type": "llama",
+        "model_name": "llama-7b"
     },
     "llama-13b":{
         "num_layers": 40,
         "num_heads": 40,
         "hidden_size": 5120,
+        "intermediate_size": 13824,
         "vocab_size": 32000,
         "max_seq_len": 2048,
-        "intermediate_size": 20480,
         "model_type": "llama",
         "model_name": "llama-13b"
     },
@@ -141,9 +23,9 @@
         "num_layers": 60,
         "num_heads": 52,
         "hidden_size": 6656,
+        "intermediate_size": 17920,
         "vocab_size": 32000,
         "max_seq_len": 2048,
-        "intermediate_size": 26624,
         "model_type": "llama",
         "model_name": "llama-30b"
     },
@@ -151,9 +33,9 @@
         "num_layers": 80,
         "num_heads": 64,
         "hidden_size": 8192,
+        "intermediate_size": 22016,
         "vocab_size": 32000,
         "max_seq_len": 2048,
-        "intermediate_size": 32768,
         "model_type": "llama",
         "model_name": "llama-65b"
     },
@@ -162,7 +44,7 @@
         "num_heads": 40,
         "num_key_value_heads": 40,
         "hidden_size": 5120,
-        "intermediate_size": 20480,
+        "intermediate_size": 13824,
         "vocab_size": 32000,
         "max_seq_len": 4096,
         "model_type": "llama",
@@ -173,8 +55,8 @@
         "num_heads": 64,
         "num_key_value_heads": 8,
         "hidden_size": 8192,
-        "intermediate_size": 32768,
-        "vocab_size": 49960,
+        "intermediate_size": 28672,
+        "vocab_size": 32000,
         "max_seq_len": 4096,
         "model_type": "llama2",
         "model_name": "llama2-70b"
@@ -184,10 +66,21 @@
         "num_heads": 40,
         "num_key_value_heads": 40,
         "hidden_size": 5120,
-        "intermediate_size": 20480,
+        "intermediate_size": 13824,
         "vocab_size": 103168,
         "max_seq_len": 16384,
-        "model_type": "llama",
+        "model_type": "internlm",
         "model_name": "internlm-20b"
+    },
+    "internlm2-20b-chat": {
+        "num_layers": 48,
+        "num_heads": 48,
+        "num_key_value_heads": 8,
+        "hidden_size": 6144,
+        "intermediate_size": 16384,
+        "vocab_size": 92544,
+        "max_seq_len": 32768,
+        "model_type": "internlm2",
+        "model_name": "internlm2-20b-chat"
     }
 }

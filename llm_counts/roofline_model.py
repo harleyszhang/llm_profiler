@@ -61,7 +61,7 @@ def plot_model_roofline_graph(model_data, gpus, colors, labels):
         tflops_intervals = [min(oi_value * bw, peak_flops) for oi_value in oi_intervals]
         plt.plot(oi_intervals, tflops_intervals, color = color, label = f"{label}, OI: {peak_flops / bw: .1f}")
 
-        ai, attainable_flops, bound = roofline_analyze(peak_flops, bw, flops, memory_access)
+        ai, attainable_flops, bound = roofline_analysis(peak_flops, bw, flops, memory_access)
         attainable_tflops = attainable_flops
         plt.scatter(ai, attainable_tflops, color = color, label=f"{model_name} (AI: {ai:.1f}, TFlops: {attainable_tflops:.1f}, Bound: {bound})", s=50)
         plt.text(ai, attainable_tflops, f' {model_name}',color = color,  va='bottom', ha='right')

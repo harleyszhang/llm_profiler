@@ -29,7 +29,7 @@ def llm_profile(model_name="llama-13b",
                 sp_size: int = 1,
                 use_kv_cache: bool = True,
                 layernorm_dtype_bytes: int = BYTES_FP16,
-                kv_cache_dtype_bytes: int = BYTES_FP16,
+                kv_cache_bytes: int = BYTES_FP16,
                 flops_efficiency: float = FLOPS_EFFICIENCY,
                 hbm_memory_efficiency: float = HBM_MEMORY_EFFICIENCY,
                 intra_node_memory_efficiency=INTRA_NODE_MEMORY_EFFICIENCY,
@@ -53,7 +53,7 @@ def llm_profile(model_name="llama-13b",
         use_kv_cache (bool, optional): Whether or not the model should use the past last key/values attentions (if applicable to the model) to
             speed up decoding. Defaults to True.
         layernorm_dtype_bytes (int, optional): number of bytes in the data type for the layernorm activations.. Defaults to BYTES_FP16.
-        kv_cache_dtype_bytes (int, optional): number of bytes in the data type for the kv_cache. Defaults to None.
+        kv_cache_bytes (int, optional): number of bytes in the data type for the kv_cache. Defaults to None.
         flops_efficiency (float, optional): flops efficiency, ranging from 0 to 1. Defaults to None.
         hbm_memory_efficiency (float, optional): GPU HBM memory efficiency, ranging from 0 to 1. Defaults to HBM_MEMORY_EFFICIENCY.
         intra_node_memory_efficiency (_type_, optional): intra-node memory efficiency, ranging from 0 to 1.. Defaults to INTRA_NODE_MEMORY_EFFICIENCY.
@@ -83,83 +83,104 @@ def llm_profile(model_name="llama-13b",
                       'gpu_fp16_TFLOPS': '312 TFLOPS'}}
 
 -------------------------- LLM infer performance analysis --------------------------
-{   'model_params': '76.92 G',
-    'model_flops': '3590.32 T',
-    'prefill_first_token_latency': '1.75 s',
-    'decode_per_token_latency': '15.81 ms',
-    'kv_cache_latency': '900.27 us',
-    'total_infer_latency': '17.94 s'}
+{   'model_params': '68.71 G',
+    'prefill_flops': '3243.71 T',
+    'decode_flops_per_step': '3.11 T',
+    'prefill_first_token_latency': '1.77 s',
+    'decode_per_token_latency': '14.58 ms',
+    'kv_cache_latency': '599.4 us',
+    'total_infer_latency': '16.69 s'}
 
----------------------------- LLM Params analysis ----------------------------
-{   'params_mha': '150.99 M',
-    'params_mlp': '805.31 M',
-    'params_rmsnorm': '32.77 K'}
-{'params_model': '76.92 G'}
+---------------------------- LLM Params per_layer analysis ----------------------------
+{   'qkvo_proj': '150.99 M',
+    'mlp': '704.64 M',
+    'rmsnorm': '16.38 K',
+    'input_embedding': '262.14 M',
+    'output_embedding': '262.14 M'}
+{'params_model': '68.71 G'}
 
----------------------------- LLM Flops analysis -----------------------------
-{   'flops_attention_kernel': '687.7 G',
-    'flops_qkvo_proj': '11.0 T',
-    'flops_mlp': '32.99 T',
-    'flops_rmsnorm': '2.68 G'}
-{'prefill flops_model': '3590.32 T'}
+---------------------------- LLM Prefill Flops per_layer analysis -----------------------------
+{   'attention_kernel': '687.7 G',
+    'qkvo_proj': '11.0 T',
+    'mlp': '28.86 T',
+    'rmsnorm': '2.68 G',
+    'positional_embedding': '335.54 M',
+    'input_embedding': '0'}
+{'prefill flops_model': '3243.71 T'}
 
 ---------------------------- LLM Memory analysis -----------------------------
-{   'weight_memory_per_gpu': '19.23 GB',
-    'prefill_act_memory_bs_1': '33.55 MB',
-    'prefill_max_bs': 619,
-    'prefill_act_memory_per_gpu': '671.09 MB'}
-{   'weight_memory_per_gpu': '19.23 GB',
-    'decode_act_memory_per_gpu': '655.36 KB',
+{   'weight_memory_per_gpu': '17.18 GB',
+    'prefill_max_bs': 340,
+    'prefill_act_memory_per_gpu': '1.34 GB'}
+{   'decode_act_memory_per_gpu': '1.31 MB',
     'kv_cache_memory_per_gpu': '1.68 GB',
-    'decode_memory_total': '20.91 GB',
-    'decode_max_bs': 247,
-    'max_batch_total_tokens': 490680}
+    'decode_memory_total': '18.86 GB',
+    'decode_max_bs': 271,
+    'max_batch_total_tokens': 538357}
 
 -------------------------- LLM Latency analysis --------------------------
-{   'prefill_latency_per_layer': {   'latency_qkvo_proj': '4.89 ms',
-                                     'latency_mlp': '14.68 ms',
-                                     'latency_rmsnorm': '7.49 us',
-                                     'latency_tp_comm': '2.17 ms'},
-    'prefill_latency_qkvo_proj': '391.56 ms',
-    'prefill_latency_mlp': '1.17 s',
-    'prefill_latency_rmsnorm': '599.4 us',
-    'prefill_latency_tp_comm': '173.99 ms',
-    'prefill_latency_input_embedding': '2.76 ms',
-    'prefill_latency_output_embedding': '7.46 ms',
-    'prefill_latency': '1.75 s'}
-{   'decode_latency_per_layer': {   'latency_qkvo_proj': '26.98 us',
-                                    'latency_mlp': '143.87 us',
-                                    'latency_rmsnorm': '0.01 us',
-                                    'latency_tp_comm': '8.0 us'},
-    'decode_latency_qkvo_proj': '2.16 ms',
-    'decode_latency_mlp': '11.51 ms',
-    'decode_latency_rmsnorm': '0.59 us',
-    'decode_latency_tp_comm': '640.0 us',
-    'decode_latency_input_embedding': '592.88 us',
-    'decode_latency_output_embedding': '7.29 us',
-    'kv_cache_avg_latency': '900.27 us',
-    'kv_cache_peak_latency': '1.2 ms',
-    'decode_avg_latency': '15.81 ms',
-    'decode_peak_latency': '16.11 ms'}
+{   'prefill_qkvo_proj': '391.56 ms',
+    'prefill_attn_kernel': '79.12 ms',
+    'prefill_mlp': '1.03 s',
+    'prefill_rmsnorm': '76.73 ms',
+    'prefill_tp_comm': '260.98 ms',
+    'prefill_kv_cache_rw': '599.4 us',
+    'prefill_latency': '1.77 s'}
+{   'decode_qkvo_proj': '2.18 ms',
+    'decode_attn_kernel': '2.42 us',
+    'decode_mlp': '10.09 ms',
+    'decode_rmsnorm': '80.54 us',
+    'decode_tp_comm': '640.0 us',
+    'decode_kv_cache_rw': '1.2 ms',
+    'kv_cache_latency': '599.4 us',
+    'decode_latency': '14.58 ms'}
 ```
 
 ## 模型结构可视化
 
-llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段:
 
 <div align="center">
-<img src="figures/prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="50%" alt="prefill 阶段">
+<img src="figures/grpah_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png.png" width="50%" alt="prefill 阶段">
 </div>
 
-llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20， decode 阶段
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20， decode 阶段:
 
 <div align="center">
-<img src="figures/decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="50%" alt="decode 阶段">
+<img src="figures/grpah_decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png.png" width="50%" alt="decode 阶段">
+</div>
+
+## 模型参数量、计算量、latency 分布
+
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，参数量统计分布:
+
+<div align="center">
+<img src="figures/params_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段">
+</div>
+
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段计算量统计分布:
+
+<div align="center">
+<img src="figures/flops_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段计算量统计分布">
+</div>
+
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段 latency 统计分布:
+
+<div align="center">
+<img src="figures/latency_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段 latency 统计分布">
+</div>
+
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，decode 阶段 latency 统计分布:
+
+<div align="center">
+<img src="figures/latency_decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="decode 阶段 latency 统计分布">
 </div>
 
 ## TODO
+
+- 修复一些计算的错误
 - 支持训练模型理论性能分析
-- 支持 零推理模式等理论性能分析
+- 支持量化
 
 ## 参考链接
 - [Transformer 性能分析理论基础](https://github.com/HarleysZhang/dl_note/blob/main/6-llm_note/transformer_basic/Transformer%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E7%90%86%E8%AE%BA%E5%9F%BA%E7%A1%80.md)
