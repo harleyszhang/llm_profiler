@@ -65,7 +65,7 @@ def llm_profile(model_name="llama-13b",
     """
 ```
 
-`llama-13b` 模型，tp_size = 8 和 bs = 103，FT 框架实际输出 latency 是 41.85 ms，理论输出 22.0 ms。输出示例信息如下所示：
+`llama2-70` 模型，tp_size = 8 和 bs = 20，输出示例信息如下所示：
 
 ```bash
 -------------------------- LLM main infer config --------------------------
@@ -145,13 +145,13 @@ def llm_profile(model_name="llama-13b",
 
 ## 模型结构可视化
 
-llama2-70b prefill 阶段
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段
 
 <div align="center">
 <img src="figures/prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="50%" alt="prefill 阶段">
 </div>
 
-llama2-70b decode 阶段
+llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20， decode 阶段
 
 <div align="center">
 <img src="figures/decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024_graph_visual.png" width="50%" alt="decode 阶段">
