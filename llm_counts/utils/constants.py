@@ -5,7 +5,9 @@ from functools import total_ordering
 #######     llm profiler    ############
 #########################################
 
-FLOPS_EFFICIENCY = 0.9  # FLOPS efficiency achieved by Megatron-LM is ~0.5 for LLM training
+FLOPS_EFFICIENCY = (
+    0.9  # FLOPS efficiency achieved by Megatron-LM is ~0.5 for LLM training
+)
 HBM_MEMORY_EFFICIENCY = 0.9  # GPU HBM memory efficiency
 INTRA_NODE_MEMORY_EFFICIENCY = 0.9  # intra-node (nvlink) memory efficiency
 INTER_NODE_MEMORY_EFFICIENCY = 0.9  # inter-node memory efficiency
@@ -29,6 +31,7 @@ BYTES_INT4 = BITS_INT4 // BITS_PER_BYTE  # number of bytes in INT4 data type
 PRINT_LINE_WIDTH = 100
 
 GPUS = [1, 2, 4, 8]
+
 
 @total_ordering
 class ActivationRecomputation(Enum):

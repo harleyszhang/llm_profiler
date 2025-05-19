@@ -1,4 +1,5 @@
 # llm_profiler
+
 llm theoretical performance analysis tools and support params, flops, memory and latency analysis.
 
 ## 主要功能
@@ -141,13 +142,13 @@ def llm_profile(model_name="llama-13b",
 llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段:
 
 <div align="center">
-<img src="figures/grpah_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png.png" width="50%" alt="prefill 阶段">
+<img src="images/grpah_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段">
 </div>
 
 llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20， decode 阶段:
 
 <div align="center">
-<img src="figures/grpah_decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png.png" width="50%" alt="decode 阶段">
+<img src="images/grpah_decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="decode 阶段">
 </div>
 
 ## 模型参数量、计算量、latency 分布
@@ -155,25 +156,25 @@ llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20， decode 阶段:
 llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，参数量统计分布:
 
 <div align="center">
-<img src="figures/params_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段">
+<img src="images/params_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段">
 </div>
 
 llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段计算量统计分布:
 
 <div align="center">
-<img src="figures/flops_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段计算量统计分布">
+<img src="images/flops_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段计算量统计分布">
 </div>
 
 llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段 latency 统计分布:
 
 <div align="center">
-<img src="figures/latency_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段 latency 统计分布">
+<img src="images/latency_prefill_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="prefill 阶段 latency 统计分布">
 </div>
 
 llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，decode 阶段 latency 统计分布:
 
 <div align="center">
-<img src="figures/latency_decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="decode 阶段 latency 统计分布">
+<img src="images/latency_decode_llama2-70b_tp8_bs20_seqlen1024_genlen1024.png" width="50%" alt="decode 阶段 latency 统计分布">
 </div>
 
 ## TODO
