@@ -10,6 +10,7 @@ class LLMAnalyzer(object):
 
     def __init__(self, llm_configs: LLMConfigs) -> None:
         self.model_config = llm_configs.model_config
+        self.model_type = self.model_config.model_type
         self.gpu_config = llm_configs.gpu_config
 
         self.hidden_size = self.model_config.hidden_size
@@ -21,7 +22,7 @@ class LLMAnalyzer(object):
         self.tp_size = llm_configs.parallelism_config.tp_size
 
         self.results = {"decode": {}, "prefill": {}}
-        self.llama_layers = {
+        self.linear_layers = {
             "q_proj": [self.hidden_size, self.hidden_size],
             "k_proj": [
                 self.hidden_size,
@@ -37,14 +38,6 @@ class LLMAnalyzer(object):
             "down_proj": [self.intermediate_size, self.hidden_size],
         }
 
-    def get_hardware_info(self, data_type="fp16"):
-        gpu_hbm_bandwidth = get_gpu_hbm_bandwidth(self.gpu_config) * 10**9  # 单位 GB/s
-        gpu_max_ops = (
-            get_TFLOPS_per_gpu(self.gpu_config, data_type=data_type) * 10**12
-        )  # 单位 TFLOPS
-
-        return gpu_hbm_bandwidth, gpu_max_ops
-
     def _analyze_to_results(
         self,
         stage,
@@ -55,15 +48,14 @@ class LLMAnalyzer(object):
         store_act,
         load_kv_cache,
         store_kv_cache,
+        data_type="fp16"
     ):
-        bandwidth, gpu_max_ops = self.get_hardware_info()
-        memory_access = (
-            load_weight + load_act + store_act + load_kv_cache + store_kv_cache
-        )
+        bandwidth = get_gpu_hbm_bandwidth(self.gpu_config) * 10**9 # GB/s
+        gpu_max_ops = get_TFLOPS_per_gpu(self.gpu_config, data_type=data_type) * 10**12  # TFLOPs
 
-        arithmetic_intensity, performance, bound = roofline_analysis(
-            gpu_max_ops, bandwidth, flops, memory_access
-        )
+        memory_access = (load_weight + load_act + store_act + load_kv_cache + store_kv_cache)
+
+        arithmetic_intensity, performance, bound = roofline_analysis(gpu_max_ops, bandwidth, flops, memory_access)
 
         self.results[stage][kernel_name] = {
             "flops": num_to_string(flops),
@@ -80,7 +72,7 @@ class LLMAnalyzer(object):
 
         return self.results
 
-    def count_memory_access(
+    def count_flops_mac(
         self,
         bs: int,
         seq_len: int,
@@ -90,8 +82,7 @@ class LLMAnalyzer(object):
         linear_act_bytes: int = BYTES_FP16,
         kv_cache_bytes: int = BYTES_FP16,
     ) -> tuple:
-        # stage = "prefill" if seq_len > 1 else
-        for name, (in_ch, out_ch) in self.llama_layers.items():
+        for name, (in_ch, out_ch) in self.linear_layers.items():
             is_kv_proj = name in ["k_proj", "v_proj"]
             is_normal_proj = not is_kv_proj
             self._analyze_to_results(
@@ -124,11 +115,8 @@ class LLMAnalyzer(object):
                 // self.tp_size,
             )
 
-        # 标准 self-attention 会执行 kv repeat 操作
         qk_matmul_flops = bs * 2 * seq_len * seq_len * self.hidden_size
-        qk_matmul_load_act = (
-            bs * seq_len * self.num_key_value_heads * kv_cache_bytes
-        )  # 加载 q 和 k 张量激活
+        qk_matmul_load_act = (bs * seq_len * self.num_key_value_heads * kv_cache_bytes)  # 加载 q 和 k 张量激活
         qk_matmul_store_act = (
             bs * seq_len * seq_len * self.num_heads * kv_cache_bytes
         )  # 存储 qk^t 结果
@@ -153,26 +141,29 @@ class LLMAnalyzer(object):
             * kv_cache_bytes
         )
 
-        softmax_flops = (
-            bs * 3 * seq_len * self.hidden_size
-        )  # e^x / sum(e^x); bs = 1 和 seq_len = 1 时 flops 为 3d-1, 张量中每个元素约执行 3 次操作
+        # e^x / sum(e^x); bs = 1 和 seq_len = 1 时 flops 为 3d-1, 张量中每个元素约执行 3 次操作
+        softmax_flops = (bs * 3 * seq_len * self.hidden_size)  
         softmax_loat_act = bs * self.num_heads * seq_len * seq_len * kv_cache_bytes
         softmax_store_act = bs * self.num_heads * seq_len * seq_len * kv_cache_bytes
 
         # rms_norm = \gamma * (x/(rms(x))), rms(x) = (\sumx^2) /d + eps. 一种结合了逐元素操作和归一化操作的算子
-        rmsnorm_flops = bs * 4 * seq_len * self.hidden_size  # mlp_norm, attn_norm
-        rmsnorm_load_weight = self.hidden_size * BYTES_FP16
-        rmsnorm_load_act = bs * seq_len * self.hidden_size * BYTES_FP16
-        rmsnorm_store_act = bs * seq_len * self.hidden_size * BYTES_FP16
+
+        if self.model_type == "qwen3":
+            # qwen3 模型中 rms_norm 计算中使用了一个额外的线性变换
+            q_norm_flops = bs * 4 * seq_len * self.head_dim
+            q_norm_load_weight = self.head_dim * BYTES_FP16
+            q_norm_load_act = bs * seq_len * self.head_dim * BYTES_FP16
+            q_norm_store_act = bs * seq_len * self.head_dim * BYTES_FP16
+
+        norm_flops = bs * 4 * seq_len * self.hidden_size  # mlp_norm, attn_norm
+        norm_load_weight = self.hidden_size * BYTES_FP16
+        norm_load_act = bs * seq_len * self.hidden_size * BYTES_FP16
+        norm_store_act = bs * seq_len * self.hidden_size * BYTES_FP16
 
         # silu 和 dot * 都是纯逐元素操作算子
-        silu_dot_flops = (
-            bs * 4 * seq_len * self.intermediate_size
-        )  # 每个张量元素执行 4 次操作
+        silu_dot_flops = (bs * 4 * seq_len * self.intermediate_size)  # 每个张量元素执行 4 次操作
         silu_dot_load_act = bs * 2 * seq_len * self.intermediate_size * linear_act_bytes
-        silu_dot_store_act = (
-            bs * 2 * seq_len * self.intermediate_size * linear_act_bytes
-        )
+        silu_dot_store_act = (bs * 2 * seq_len * self.intermediate_size * linear_act_bytes)
 
         mlp_add_flops = bs * seq_len * self.hidden_size
         mlp_add_load_act = bs * seq_len * self.hidden_size * linear_act_bytes
@@ -180,6 +171,8 @@ class LLMAnalyzer(object):
 
         # other kernels (memory bound)
         kernels = [
+            "q_norm",
+            "k_norm",
             "qk_matmul",
             "sv_matmul",
             "softmax",
@@ -193,8 +186,8 @@ class LLMAnalyzer(object):
             qk_matmul_flops,
             sv_matmul_flops,
             softmax_flops,
-            rmsnorm_flops,
-            rmsnorm_flops,
+            norm_flops,
+            norm_flops,
             silu_dot_flops,
             mlp_add_flops,
             mlp_add_flops,
@@ -203,8 +196,8 @@ class LLMAnalyzer(object):
             qk_matmul_load_act,
             sv_matmul_load_act,
             softmax_loat_act,
-            rmsnorm_load_act,
-            rmsnorm_load_act,
+            norm_load_act,
+            norm_load_act,
             silu_dot_load_act,
             mlp_add_load_act,
             mlp_add_load_act,
@@ -213,8 +206,8 @@ class LLMAnalyzer(object):
             qk_matmul_store_act,
             sv_matmul_store_act,
             softmax_store_act,
-            rmsnorm_store_act,
-            rmsnorm_store_act,
+            norm_store_act,
+            norm_store_act,
             silu_dot_store_act,
             mlp_add_store_act,
             mlp_add_store_act,
@@ -226,7 +219,7 @@ class LLMAnalyzer(object):
                 load_weight = (
                     0
                     if (kernel_name not in ["attn_norm", "mlp_norm"])
-                    else rmsnorm_load_weight
+                    else norm_load_weight
                 )
 
                 load_act = load_act_list[i]
@@ -256,4 +249,165 @@ class LLMAnalyzer(object):
                 )
         # 返回累积分析结果
         return self.results
-        # total_results = {"decode": {}, "prefill": {}}
+    
+    @staticmethod
+    def create_layer_graph(results, base_path):
+        from graphviz import Digraph
+
+        stage_list = ["prefill", "decode"]
+        for stage in stage_list:
+            res = results[stage]
+            # Define the transformer layer graph with operation and memory info
+            llama_layer_graph = {
+                "input": {
+                    "dependencies": [],
+                    "ops": "0",
+                    "access": "0",
+                    "bound": "N/A",
+                },
+                "attn_norm": {
+                    "dependencies": ["input"],
+                    "ops": res["attn_norm"]["flops"],
+                    "access": res["attn_norm"]["memory_access"],
+                    "params": res["attn_norm"]["load_weight"],
+                    "bound": res["attn_norm"]["bound"],
+                },
+                "q_proj": {
+                    "dependencies": ["attn_norm"],
+                    "ops": res["q_proj"]["flops"],
+                    "access": res["q_proj"]["memory_access"],
+                    "params": res["q_proj"]["load_weight"],
+                    "bound": res["q_proj"]["bound"],
+                },
+                "k_proj": {
+                    "dependencies": ["attn_norm"],
+                    "ops": res["k_proj"]["flops"],
+                    "access": res["k_proj"]["memory_access"],
+                    "params": res["k_proj"]["load_weight"],
+                    "bound": res["k_proj"]["bound"],
+                },
+                "v_proj": {
+                    "dependencies": ["attn_norm"],
+                    "ops": res["v_proj"]["flops"],
+                    "access": res["v_proj"]["memory_access"],
+                    "params": res["v_proj"]["load_weight"],
+                    "bound": res["v_proj"]["bound"],
+                },
+                "qk_matmul": {
+                    "dependencies": ["q_proj", "k_proj"],
+                    "ops": res["qk_matmul"]["flops"],
+                    "access": res["qk_matmul"]["memory_access"],
+                    "params": res["qk_matmul"]["load_weight"],
+                    "bound": res["qk_matmul"]["bound"],
+                },
+                "softmax": {
+                    "dependencies": ["qk_matmul"],
+                    "ops": res["softmax"]["flops"],
+                    "access": res["softmax"]["memory_access"],
+                    "params": res["softmax"]["load_weight"],
+                    "bound": res["softmax"]["bound"],
+                },
+                "sv_matmul": {
+                    "dependencies": ["softmax", "v_proj"],
+                    "ops": res["sv_matmul"]["flops"],
+                    "access": res["sv_matmul"]["memory_access"],
+                    "params": res["sv_matmul"]["load_weight"],
+                    "bound": res["sv_matmul"]["bound"],
+                },
+                "out_proj": {
+                    "dependencies": ["sv_matmul"],
+                    "ops": res["out_proj"]["flops"],
+                    "access": res["out_proj"]["memory_access"],
+                    "params": res["out_proj"]["load_weight"],
+                    "bound": res["out_proj"]["bound"],
+                },
+                "attn_add": {
+                    "dependencies": ["input", "out_proj"],
+                    "ops": res["attn_add"]["flops"],
+                    "access": res["attn_add"]["memory_access"],
+                    "params": res["attn_add"]["load_weight"],
+                    "bound": res["attn_add"]["bound"],
+                },
+                "mlp_norm": {
+                    "dependencies": ["attn_add"],
+                    "ops": res["mlp_norm"]["flops"],
+                    "access": res["mlp_norm"]["memory_access"],
+                    "params": res["mlp_norm"]["load_weight"],
+                    "bound": res["mlp_norm"]["bound"],
+                },
+                "gate_proj": {
+                    "dependencies": ["mlp_norm"],
+                    "ops": res["gate_proj"]["flops"],
+                    "access": res["gate_proj"]["memory_access"],
+                    "params": res["gate_proj"]["load_weight"],
+                    "bound": res["gate_proj"]["bound"],
+                },
+                "up_proj": {
+                    "dependencies": ["mlp_norm"],
+                    "ops": res["up_proj"]["flops"],
+                    "access": res["up_proj"]["memory_access"],
+                    "params": res["up_proj"]["load_weight"],
+                    "bound": res["up_proj"]["bound"],
+                },
+                "mlp_silu_dot": {
+                    "dependencies": ["up_proj", "gate_proj"],
+                    "ops": res["mlp_silu_dot"]["flops"],
+                    "access": res["mlp_silu_dot"]["memory_access"],
+                    "params": res["mlp_silu_dot"]["load_weight"],
+                    "bound": res["mlp_silu_dot"]["bound"],
+                },
+                "down_proj": {
+                    "dependencies": ["mlp_silu_dot"],
+                    "ops": res["down_proj"]["flops"],
+                    "access": res["down_proj"]["memory_access"],
+                    "params": res["down_proj"]["load_weight"],
+                    "bound": res["down_proj"]["bound"],
+                },
+                "mlp_add": {
+                    "dependencies": ["attn_add", "down_proj"],
+                    "ops": res["mlp_add"]["flops"],
+                    "access": res["mlp_add"]["memory_access"],
+                    "params": res["mlp_add"]["load_weight"],
+                    "bound": res["mlp_add"]["bound"],
+                },
+                "output": {"dependencies": ["mlp_add"], "ops": "0", "access": "0"},
+            }
+
+            if self.model_type == "qwen3":
+                llama_layer_graph["k_norm"] = {
+                    "dependencies": ["k_proj"],
+                    "ops": res["k_norm"]["flops"],
+                    "access": res["k_norm"]["memory_access"],
+                    "params": res["k_norm"]["load_weight"],
+                    "bound": res["k_norm"]["bound"],
+                }
+                llama_layer_graph["q_norm"] = {
+                    "dependencies": ["q_proj"],
+                    "ops": res["q_norm"]["flops"],
+                    "access": res["q_norm"]["memory_access"],
+                    "params": res["q_norm"]["load_weight"],
+                    "bound": res["q_norm"]["bound"],
+                }
+
+            # Initialize the Digraph
+            dot = Digraph(
+                format="png",
+                node_attr={"style": "filled", "shape": "box", "fontname": "Arial"},
+            )
+
+            # Add nodes and edges
+            for node, details in llama_layer_graph.items():
+                # Add the node with operation and access details
+                label = f"{node}\nOPs: {details['ops']}, Access: {details['access']}, \nParams: {details.get('params', 0)}, Bound: {details.get('bound', 'N/A')}"
+                dot.node(
+                    node,
+                    label=label,
+                    fillcolor="lightblue" if "proj" in node else "lightcyan",
+                )
+
+                # Add edges based on dependencies
+                for dep in details["dependencies"]:
+                    dot.edge(dep, node)
+
+            graph_path = f"./figures/grpah_{stage}" + base_path
+            dot.render(graph_path, cleanup=True)

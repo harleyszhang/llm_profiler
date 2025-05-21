@@ -180,14 +180,12 @@ class LLMAnalyzerVisual(object):
 
         # --------------------------- 5. Memory Access ----------------------
         if visual_flag:
-            llm_count_mac = LLMAnalyzer(self.llm_configs)
-            results = llm_count_mac.count_memory_access(
-                bs=bs, seq_len=seq_len, generate_len=generate_len
-            )
+            llm_analyzer = LLMAnalyzer(self.llm_configs)
+            results = llm_analyzer.count_flops_mac(bs=bs, seq_len=seq_len, generate_len=generate_len)
 
             # -------------------------- 绘图：模型 graph 图示例 --------------------------
             base_path = f"_{self.model_config.model_name}_tp{self.tp_size}_bs{self.b}_seqlen{self.s}_genlen{self.o}.png"
-            self.create_layer_graph(results, base_path)
+            llm_analyzer.create_layer_graph(results, base_path)
             self.print_format_summary_dict(results, get_dict_depth(results))
 
             # -------------------------- 绘图：Pie 图示例 --------------------------
@@ -335,150 +333,7 @@ class LLMAnalyzerVisual(object):
         plt.tight_layout()  # 自动调整布局
         plt.savefig(save_path, bbox_inches="tight")  # 确保保存时不截断内容
 
-    def create_layer_graph(self, results, base_path):
-        from graphviz import Digraph
-
-        stage_list = ["prefill", "decode"]
-        for stage in stage_list:
-            res = results[stage]
-            # Define the transformer layer graph with operation and memory info
-            llama_layer_graph = {
-                "input": {
-                    "dependencies": [],
-                    "ops": "0",
-                    "access": "0",
-                    "bound": "N/A",
-                },
-                "attn_norm": {
-                    "dependencies": ["input"],
-                    "ops": res["attn_norm"]["flops"],
-                    "access": res["attn_norm"]["memory_access"],
-                    "params": res["attn_norm"]["load_weight"],
-                    "bound": res["attn_norm"]["bound"],
-                },
-                "q_proj": {
-                    "dependencies": ["attn_norm"],
-                    "ops": res["q_proj"]["flops"],
-                    "access": res["q_proj"]["memory_access"],
-                    "params": res["q_proj"]["load_weight"],
-                    "bound": res["q_proj"]["bound"],
-                },
-                "k_proj": {
-                    "dependencies": ["attn_norm"],
-                    "ops": res["k_proj"]["flops"],
-                    "access": res["k_proj"]["memory_access"],
-                    "params": res["k_proj"]["load_weight"],
-                    "bound": res["k_proj"]["bound"],
-                },
-                "v_proj": {
-                    "dependencies": ["attn_norm"],
-                    "ops": res["v_proj"]["flops"],
-                    "access": res["v_proj"]["memory_access"],
-                    "params": res["v_proj"]["load_weight"],
-                    "bound": res["v_proj"]["bound"],
-                },
-                "qk_matmul": {
-                    "dependencies": ["q_proj", "k_proj"],
-                    "ops": res["qk_matmul"]["flops"],
-                    "access": res["qk_matmul"]["memory_access"],
-                    "params": res["qk_matmul"]["load_weight"],
-                    "bound": res["qk_matmul"]["bound"],
-                },
-                "softmax": {
-                    "dependencies": ["qk_matmul"],
-                    "ops": res["softmax"]["flops"],
-                    "access": res["softmax"]["memory_access"],
-                    "params": res["softmax"]["load_weight"],
-                    "bound": res["softmax"]["bound"],
-                },
-                "sv_matmul": {
-                    "dependencies": ["softmax", "v_proj"],
-                    "ops": res["sv_matmul"]["flops"],
-                    "access": res["sv_matmul"]["memory_access"],
-                    "params": res["sv_matmul"]["load_weight"],
-                    "bound": res["sv_matmul"]["bound"],
-                },
-                "out_proj": {
-                    "dependencies": ["sv_matmul"],
-                    "ops": res["out_proj"]["flops"],
-                    "access": res["out_proj"]["memory_access"],
-                    "params": res["out_proj"]["load_weight"],
-                    "bound": res["out_proj"]["bound"],
-                },
-                "attn_add": {
-                    "dependencies": ["input", "out_proj"],
-                    "ops": res["attn_add"]["flops"],
-                    "access": res["attn_add"]["memory_access"],
-                    "params": res["attn_add"]["load_weight"],
-                    "bound": res["attn_add"]["bound"],
-                },
-                "mlp_norm": {
-                    "dependencies": ["attn_add"],
-                    "ops": res["mlp_norm"]["flops"],
-                    "access": res["mlp_norm"]["memory_access"],
-                    "params": res["mlp_norm"]["load_weight"],
-                    "bound": res["mlp_norm"]["bound"],
-                },
-                "gate_proj": {
-                    "dependencies": ["mlp_norm"],
-                    "ops": res["gate_proj"]["flops"],
-                    "access": res["gate_proj"]["memory_access"],
-                    "params": res["gate_proj"]["load_weight"],
-                    "bound": res["gate_proj"]["bound"],
-                },
-                "up_proj": {
-                    "dependencies": ["mlp_norm"],
-                    "ops": res["up_proj"]["flops"],
-                    "access": res["up_proj"]["memory_access"],
-                    "params": res["up_proj"]["load_weight"],
-                    "bound": res["up_proj"]["bound"],
-                },
-                "mlp_silu_dot": {
-                    "dependencies": ["up_proj", "gate_proj"],
-                    "ops": res["mlp_silu_dot"]["flops"],
-                    "access": res["mlp_silu_dot"]["memory_access"],
-                    "params": res["mlp_silu_dot"]["load_weight"],
-                    "bound": res["mlp_silu_dot"]["bound"],
-                },
-                "down_proj": {
-                    "dependencies": ["mlp_silu_dot"],
-                    "ops": res["down_proj"]["flops"],
-                    "access": res["down_proj"]["memory_access"],
-                    "params": res["down_proj"]["load_weight"],
-                    "bound": res["down_proj"]["bound"],
-                },
-                "mlp_add": {
-                    "dependencies": ["attn_add", "down_proj"],
-                    "ops": res["mlp_add"]["flops"],
-                    "access": res["mlp_add"]["memory_access"],
-                    "params": res["mlp_add"]["load_weight"],
-                    "bound": res["mlp_add"]["bound"],
-                },
-                "output": {"dependencies": ["mlp_add"], "ops": "0", "access": "0"},
-            }
-
-            # Initialize the Digraph
-            dot = Digraph(
-                format="png",
-                node_attr={"style": "filled", "shape": "box", "fontname": "Arial"},
-            )
-
-            # Add nodes and edges
-            for node, details in llama_layer_graph.items():
-                # Add the node with operation and access details
-                label = f"{node}\nOPs: {details['ops']}, Access: {details['access']}, \nParams: {details.get('params', 0)}, Bound: {details.get('bound', 'N/A')}"
-                dot.node(
-                    node,
-                    label=label,
-                    fillcolor="lightblue" if "proj" in node else "lightcyan",
-                )
-
-                # Add edges based on dependencies
-                for dep in details["dependencies"]:
-                    dot.edge(dep, node)
-
-            graph_path = f"./figures/grpah_{stage}" + base_path
-            dot.render(graph_path, cleanup=True)
+   
 
     def print_format_summary_dict(self, summary_dict: dict, depth: int) -> str:
         """打印时对 params / flops / latency / memory 等进行统一转换显示。"""

@@ -35,8 +35,6 @@ def print_list(list):
 
 
 ####################################################################################################################
-
-
 def llm_profile(
     model_name,
     gpu_name: str = "a100-sxm-40gb",
@@ -68,15 +66,17 @@ def llm_profile(
         gpu_name (str, optional): gpu name to query the pre-defined `model_configs.json`. Defaults to "v100-sxm2-32gb".
         bs (int, optional): _description_. Defaults to 1.
         seq_len (int, optional): batch size per GPU.. Defaults to 522.
-        generate_len (int, optional): The maximum numbers of tokens to generate, ignoring the number of tokens in the prompt. Defaults to 1526.
+        generate_len (int, optional): The maximum numbers of tokens to generate, 
+            ignoring the number of tokens in the prompt. Defaults to 1526.
         ds_zero (int, optional): which DeepSpeed ZeRO stage to use.. Defaults to 0.
         dp_size (int, optional): data parallelism size. Defaults to 1.
         tp_size (int, optional): tensor parallelism size. Defaults to 1.
         pp_size (int, optional): pipeline parallelism size. Defaults to 1.
         sp_size (int, optional): sequence parallelism size. Defaults to 1.
-        use_kv_cache (bool, optional): Whether or not the model should use the past last key/values attentions (if applicable to the model) to
-            speed up decoding. Defaults to True.
-        layernorm_dtype_bytes (int, optional): number of bytes in the data type for the layernorm activations.. Defaults to BYTES_FP16.
+        use_kv_cache (bool, optional): Whether or not the model should use the 
+            past last key/values attentions (if applicable to the model) to speed up decoding. Defaults to True.
+        layernorm_dtype_bytes (int, optional): number of bytes in the data type for the layernorm activations..
+            Defaults to BYTES_FP16.
         kv_cache_bytes (int, optional): number of bytes in the data type for the kv_cache. Defaults to None.
         flops_efficiency (float, optional): flops efficiency, ranging from 0 to 1. Defaults to None.
         hbm_memory_efficiency (float, optional): GPU HBM memory efficiency, ranging from 0 to 1. Defaults to HBM_MEMORY_EFFICIENCY.
@@ -211,10 +211,6 @@ def print_all_llm_analyzer():
 # ========================================================================== #
 # New utilities: sweep sequence‑lengths & visualise                          #
 # ========================================================================== #
-
-# ====================================================================== #
-# Improved visualisation helper                                          #
-# ====================================================================== #
 def plot_seq_len_sweep(
     df: pd.DataFrame,
     model_name: str,
