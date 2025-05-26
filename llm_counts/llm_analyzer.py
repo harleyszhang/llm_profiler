@@ -8,35 +8,31 @@ from .utils.utils import num_to_string
 class LLMAnalyzer(object):
     """Count memory access of the model and layers."""
 
-    def __init__(self, llm_configs: LLMConfigs) -> None:
-        self.model_config = llm_configs.model_config
-        self.model_type = self.model_config.model_type
-        self.gpu_config = llm_configs.gpu_config
-
-        self.hidden_size = self.model_config.hidden_size
-        self.intermediate_size = self.model_config.intermediate_size
-        self.num_heads = self.model_config.num_heads
-        self.num_key_value_heads = self.model_config.num_key_value_heads
+    def __init__(self, model_config,  gpu_config, tp_size) -> None:
+        self.tp_size = tp_size
+        self.bandwidth, self.onchip_buffer = get_gpu_hbm_bandwidth(gpu_config) # GB/s
+        self.bandwidth *= 10**9 
+        self.gpu_max_ops = get_TFLOPS_per_gpu(gpu_config, data_type="fp16") * 10**12  # TFLOPs
+    
+        self.model_type = model_config.model_type
+        self.hidden_size = model_config.hidden_size
+        self.intermediate_size = model_config.intermediate_size
+        self.num_heads = model_config.num_heads
+        self.num_kv_heads = model_config.num_kv_heads
         self.head_dim = self.hidden_size // self.num_heads
 
-        self.tp_size = llm_configs.parallelism_config.tp_size
-
-        self.results = {"decode": {}, "prefill": {}}
+        # attention linear layers
         self.linear_layers = {
             "q_proj": [self.hidden_size, self.hidden_size],
-            "k_proj": [
-                self.hidden_size,
-                self.hidden_size * self.num_key_value_heads / self.num_heads,
-            ],
-            "v_proj": [
-                self.hidden_size,
-                self.hidden_size * self.num_key_value_heads / self.num_heads,
-            ],
+            "k_proj": [self.hidden_size, self.hidden_size * self.num_kv_heads / self.num_heads],
+            "v_proj": [self.hidden_size, self.hidden_size * self.num_kv_heads / self.num_heads],
             "out_proj": [self.hidden_size, self.hidden_size],
             "gate_proj": [self.hidden_size, self.intermediate_size],
             "up_proj": [self.hidden_size, self.intermediate_size],
             "down_proj": [self.intermediate_size, self.hidden_size],
         }
+
+        self.results = {"decode": {}, "prefill": {}}
 
     def _analyze_to_results(
         self,
@@ -50,18 +46,16 @@ class LLMAnalyzer(object):
         store_kv_cache,
         data_type="fp16"
     ):
-        bandwidth = get_gpu_hbm_bandwidth(self.gpu_config) * 10**9 # GB/s
-        gpu_max_ops = get_TFLOPS_per_gpu(self.gpu_config, data_type=data_type) * 10**12  # TFLOPs
-
-        memory_access = (load_weight + load_act + store_act + load_kv_cache + store_kv_cache)
-
-        arithmetic_intensity, performance, bound = roofline_analysis(gpu_max_ops, bandwidth, flops, memory_access)
+        memory_access = (load_weight + load_act + store_act  + load_kv_cache + store_kv_cache)
+        a_intensity, att_flops, bound = roofline_analysis(self.gpu_max_ops, 
+                                                          self.bandwidth, 
+                                                          flops, memory_access) # Arithmetic Intensity
 
         self.results[stage][kernel_name] = {
             "flops": num_to_string(flops),
             "memory_access": f"{num_to_string(memory_access)}B",
-            "arithmetic_intensity": int(arithmetic_intensity),
-            "performance": num_to_string(performance),
+            "arithmetic_intensity": int(a_intensity),
+            "att_flops": num_to_string(att_flops),
             "bound": bound,
             "load_weight": f"{num_to_string(load_weight)}B",
             "load_act": num_to_string(load_act),
@@ -72,171 +66,240 @@ class LLMAnalyzer(object):
 
         return self.results
 
-    def count_flops_mac(
-        self,
+    def analyze_linear_layers(
+        self, 
         bs: int,
         seq_len: int,
-        generate_len: int,
-        flash_attn: bool = False,
         linear_weight_bytes: int = BYTES_FP16,
-        linear_act_bytes: int = BYTES_FP16,
-        kv_cache_bytes: int = BYTES_FP16,
-    ) -> tuple:
+        act_byte: int = BYTES_FP16,
+        kv_byte: int = BYTES_FP16,
+    ):
+        """
+        Count and save the FLOPs and memory access of self-attention layers.
+        This function is used to analyze the self-attention layers in the model.
+        """
+        # 1. attention linear layers analysis
         for name, (in_ch, out_ch) in self.linear_layers.items():
             is_kv_proj = name in ["k_proj", "v_proj"]
             is_normal_proj = not is_kv_proj
-            self._analyze_to_results(
-                "decode",
-                name,
-                flops=2 * bs * in_ch * out_ch // self.tp_size,
-                load_weight=in_ch * out_ch * linear_weight_bytes // self.tp_size,
-                load_act=in_ch * bs * linear_act_bytes // self.tp_size,
-                store_act=0
-                if is_kv_proj
-                else out_ch * bs * linear_act_bytes // self.tp_size,
-                load_kv_cache=0,
-                store_kv_cache=(0 if is_normal_proj else out_ch * bs * kv_cache_bytes)
-                // self.tp_size,
-            )
 
             self._analyze_to_results(
                 "prefill",
                 name,
                 flops=2 * bs * seq_len * in_ch * out_ch // self.tp_size,
                 load_weight=in_ch * out_ch * linear_weight_bytes // self.tp_size,
-                load_act=in_ch * bs * seq_len * linear_act_bytes // self.tp_size,
-                store_act=0
-                if is_kv_proj
-                else out_ch * bs * seq_len * linear_act_bytes // self.tp_size,
+                load_act=in_ch * bs * seq_len * act_byte // self.tp_size,
+                store_act=0 if is_kv_proj else  bs * seq_len * out_ch * act_byte // self.tp_size,
                 load_kv_cache=0,
-                store_kv_cache=(
-                    0 if is_normal_proj else out_ch * bs * seq_len * kv_cache_bytes
-                )
-                // self.tp_size,
+                store_kv_cache=(0 if is_normal_proj else out_ch * bs * seq_len * kv_byte) // self.tp_size
+            )  
+            self._analyze_to_results(
+                "decode",
+                name,
+                flops=2 * bs * in_ch * out_ch // self.tp_size,
+                load_weight=in_ch * out_ch * linear_weight_bytes // self.tp_size,
+                load_act=in_ch * bs * act_byte // self.tp_size,
+                store_act=0 if is_kv_proj else out_ch * bs * act_byte // self.tp_size,
+                load_kv_cache=0,
+                store_kv_cache=(0 if is_normal_proj else out_ch * bs * kv_byte) // self.tp_size,
+            )
+    
+    def analyze_self_atten_kernel(
+        self, 
+        bs: int,
+        seq_len: int,
+        generate_len: int,
+        num_kv_heads: int,
+        num_heads: int,
+        head_dim: int,
+        flash_attn: bool = False,
+        act_byte: int = BYTES_FP16,
+        kv_byte: int = BYTES_FP16,
+    ):
+        """
+        Count and save the FLOPs and memory access of self-attention kernels.
+        This function is used to analyze the self-attention kernels in the model.
+        """
+        hidden_size = num_heads * head_dim
+        if not flash_attn:
+            # 1, qkt kernel analysis
+            name = "qk_matmul"
+            self._analyze_to_results(
+                "prefill",
+                name,
+                flops=2 * seq_len * seq_len * self.head_dim * bs * self.num_heads,
+                load_weight=0,
+                load_act= 2 * bs * seq_len * hidden_size* act_byte, # load q and k act, shape is [s, h]
+                store_act=seq_len * seq_len * bs * num_heads * act_byte,
+                load_kv_cache=0,
+                store_kv_cache=0,
+            )
+            # load q and k, k is form kv cache
+            self._analyze_to_results(
+                "decode",
+                name,
+                flops=2 * bs * num_heads * head_dim * (seq_len + generate_len),
+                load_weight=0,
+                load_act=bs * seq_len * hidden_size * act_byte,
+                store_act=bs * (seq_len + generate_len) * num_kv_heads * head_dim * act_byte,
+                load_kv_cache=bs * (seq_len + generate_len) * num_kv_heads * head_dim * kv_byte,
+                store_kv_cache=0,
+            )
+            # 2, sv kernel analysis
+            name = "sv_matmul"
+            self._analyze_to_results(
+                "prefill",
+                name,
+                flops=bs * 2 * seq_len * seq_len * head_dim * num_heads,
+                load_weight=0,
+                load_act=2 * bs * seq_len * seq_len * act_byte, # load score(qkt) act, shape is [s, s]
+                store_act=bs * seq_len * hidden_size * act_byte,
+                load_kv_cache=0,
+                store_kv_cache=0,
             )
 
-        qk_matmul_flops = bs * 2 * seq_len * seq_len * self.hidden_size
-        qk_matmul_load_act = (bs * seq_len * self.num_key_value_heads * kv_cache_bytes)  # 加载 q 和 k 张量激活
-        qk_matmul_store_act = (
-            bs * seq_len * seq_len * self.num_heads * kv_cache_bytes
-        )  # 存储 qk^t 结果
-        qk_matmul_load_kv_cache = (
-            (seq_len + generate_len)
-            * self.head_dim
-            * bs
-            * self.num_key_value_heads
-            * kv_cache_bytes
-        )
+            self._analyze_to_results(
+                "decode",
+                name,
+                flops=2 * bs * num_heads * head_dim * (seq_len + generate_len),
+                load_weight=0,
+                load_act=bs * (seq_len + generate_len) * act_byte, # load score(qkt) act, shape is [1, s+o]
+                store_act=bs * seq_len * num_heads * head_dim * act_byte,
+                load_kv_cache=bs * (seq_len + generate_len) * num_kv_heads * head_dim * kv_byte,
+                store_kv_cache=0,
+            )
 
-        sv_matmul_flops = bs * 2 * seq_len * seq_len * self.hidden_size
-        sv_matmul_load_act = bs * seq_len * seq_len * self.num_heads * kv_cache_bytes
-        sv_matmul_store_act = (
-            bs * seq_len * self.head_dim * self.num_heads * kv_cache_bytes
-        )
-        sv_matmul_load_kv_cache = (
-            (seq_len + generate_len)
-            * self.head_dim
-            * bs
-            * self.num_key_value_heads
-            * kv_cache_bytes
-        )
+            # 3, softmax kernel analysis
+            name = f"softmax"
+            self._analyze_to_results(
+                "prefill",
+                name,
+                flops= (bs * num_heads * seq_len * seq_len * 1 * 5),
+                load_weight=0,
+                load_act=bs * self.num_heads * seq_len * seq_len * kv_byte,
+                store_act=bs * self.num_heads * seq_len * seq_len * kv_byte,
+                load_kv_cache=0,
+                store_kv_cache=0,
+            )
 
-        # e^x / sum(e^x); bs = 1 和 seq_len = 1 时 flops 为 3d-1, 张量中每个元素约执行 3 次操作
-        softmax_flops = (bs * 3 * seq_len * self.hidden_size)  
-        softmax_loat_act = bs * self.num_heads * seq_len * seq_len * kv_cache_bytes
-        softmax_store_act = bs * self.num_heads * seq_len * seq_len * kv_cache_bytes
+            self._analyze_to_results(
+                "decode",
+                name,
+                flops= (bs * num_heads * (seq_len + generate_len) * 1 * 5) ,
+                load_weight=0,
+                load_act=bs * self.num_heads * (seq_len + generate_len)  * 1 * kv_byte,
+                store_act=bs * self.num_heads * (seq_len + generate_len)  * 1 * kv_byte,
+                load_kv_cache=0,
+                store_kv_cache=0,
+            )
+        else:
+            name = f"fused_attention" # flash_attn2
+            qk_matmul_OPs = seq_len * seq_len * head_dim * num_heads * bs * 2
+            sv_matmul_OPs = seq_len * head_dim * seq_len * num_heads * bs * 2
+            softmax_OPs = bs * num_heads * seq_len * seq_len * 5
 
-        # rms_norm = \gamma * (x/(rms(x))), rms(x) = (\sumx^2) /d + eps. 一种结合了逐元素操作和归一化操作的算子
+            block_size_r = min(math.ceil(self.onchip_buffer / (kv_byte * head_dim)), head_dim)
+            n_blocks_r = math.ceil(seq_len / block_size_r)
+            q_numel = seq_len * head_dim * bs * num_heads * act_byte
+            o_numel = seq_len * seq_len * bs * num_heads * act_byte
+
+            self._analyze_to_results(
+                "prefill",
+                name,
+                flops=qk_matmul_OPs + sv_matmul_OPs + softmax_OPs,
+                load_weight=0,
+                load_act=q_numel,
+                store_act=o_numel * 2,  # initialize O and save O
+                load_kv_cache=n_blocks_r * (seq_len) * head_dim * bs * num_kv_heads * kv_byte * 2,
+                store_kv_cache=0,
+            )
+
+            qk_matmul_OPs = seq_len * head_dim * num_heads * bs * 2
+            sv_matmul_OPs = 1 * head_dim * seq_len * num_heads * bs * 2
+            softmax_OPs = bs * num_heads * seq_len * 1 * 5
+
+            n_blocks_r = math.ceil(1 / block_size_r)
+            q_numel = (1) * head_dim * bs * num_heads * act_byte
+            o_numel = 1 * seq_len * bs * num_heads * act_byte
+            self._analyze_to_results(
+                "decode",
+                name,
+                OPs=qk_matmul_OPs + sv_matmul_OPs + softmax_OPs,
+                load_weight=0,
+                load_act=q_numel,
+                store_act=o_numel * 2,  # initialize O and save O
+                load_kv_cache=n_blocks_r * (seq_len) * head_dim * bs * num_kv_heads * kv_byte * 2,
+                store_kv_cache=0,
+            )
 
         if self.model_type == "qwen3":
+            kernel_names = ["q_norm", "k_norm"]
             # qwen3 模型中 rms_norm 计算中使用了一个额外的线性变换
             q_norm_flops = bs * 4 * seq_len * self.head_dim
             q_norm_load_weight = self.head_dim * BYTES_FP16
-            q_norm_load_act = bs * seq_len * self.head_dim * BYTES_FP16
+            q_norm_load_act = bs * seq_len * self.head_dim * BYTES_FP16 # equal k_norm_load_act
             q_norm_store_act = bs * seq_len * self.head_dim * BYTES_FP16
 
-        norm_flops = bs * 4 * seq_len * self.hidden_size  # mlp_norm, attn_norm
+            # prefill/decode 阶段
+            for stage in ["prefill", "decode"]:
+                if stage == "decode":
+                    q_norm_flops = int(q_norm_flops // seq_len)
+                    q_norm_load_act = int(q_norm_load_act // seq_len)
+                    q_norm_store_act = int(q_norm_store_act // seq_len)
+
+                for _, kernel_name in enumerate(kernel_names):
+                    self._analyze_to_results(
+                        stage,
+                        kernel_name,
+                        flops=q_norm_flops // self.tp_size,
+                        load_weight=q_norm_load_weight // self.tp_size,
+                        load_act=q_norm_load_act // self.tp_size,
+                        store_act=q_norm_store_act // self.tp_size,
+                        load_kv_cache=0,
+                        store_kv_cache=0,
+                    )
+    
+    def analyze_other_kernels(
+        self,
+        bs: int,
+        seq_len: int,
+        act_byte: int = BYTES_FP16,
+    ):
+        norm_flops = bs * seq_len * 4 * self.hidden_size  # mlp_norm, attn_norm
         norm_load_weight = self.hidden_size * BYTES_FP16
         norm_load_act = bs * seq_len * self.hidden_size * BYTES_FP16
         norm_store_act = bs * seq_len * self.hidden_size * BYTES_FP16
 
         # silu 和 dot * 都是纯逐元素操作算子
         silu_dot_flops = (bs * 4 * seq_len * self.intermediate_size)  # 每个张量元素执行 4 次操作
-        silu_dot_load_act = bs * 2 * seq_len * self.intermediate_size * linear_act_bytes
-        silu_dot_store_act = (bs * 2 * seq_len * self.intermediate_size * linear_act_bytes)
+        silu_dot_load_act = bs * 2 * seq_len * self.intermediate_size * act_byte
+        silu_dot_store_act = (bs * 2 * seq_len * self.intermediate_size * act_byte)
 
         mlp_add_flops = bs * seq_len * self.hidden_size
-        mlp_add_load_act = bs * seq_len * self.hidden_size * linear_act_bytes
-        mlp_add_store_act = bs * seq_len * self.hidden_size * linear_act_bytes
+        mlp_add_load_act = bs * seq_len * self.hidden_size * act_byte
+        mlp_add_store_act = bs * seq_len * self.hidden_size * act_byte
 
         # other kernels (memory bound)
-        kernels = [
-            "q_norm",
-            "k_norm",
-            "qk_matmul",
-            "sv_matmul",
-            "softmax",
-            "attn_norm",
-            "mlp_norm",
-            "mlp_silu_dot",
-            "attn_add",
-            "mlp_add",
-        ]
-        flops_list = [
-            qk_matmul_flops,
-            sv_matmul_flops,
-            softmax_flops,
-            norm_flops,
-            norm_flops,
-            silu_dot_flops,
-            mlp_add_flops,
-            mlp_add_flops,
-        ]
-        load_act_list = [
-            qk_matmul_load_act,
-            sv_matmul_load_act,
-            softmax_loat_act,
-            norm_load_act,
-            norm_load_act,
-            silu_dot_load_act,
-            mlp_add_load_act,
-            mlp_add_load_act,
-        ]
-        store_act_list = [
-            qk_matmul_store_act,
-            sv_matmul_store_act,
-            softmax_store_act,
-            norm_store_act,
-            norm_store_act,
-            silu_dot_store_act,
-            mlp_add_store_act,
-            mlp_add_store_act,
-        ]
+        kernel_names = ["attn_norm", "mlp_norm", "mlp_silu_dot", "attn_add", "mlp_add"]
+        flops_list = [norm_flops, norm_flops, silu_dot_flops, mlp_add_flops, mlp_add_flops]
+        
+        load_act_list = [norm_load_act, norm_load_act, silu_dot_load_act, mlp_add_load_act, mlp_add_load_act,]
+        store_act_list = [norm_store_act, norm_store_act, silu_dot_store_act, mlp_add_store_act, mlp_add_store_act,]
 
-        # prefill 阶段
+        # prefill/decode 阶段
         for stage in ["prefill", "decode"]:
-            for i, kernel_name in enumerate(kernels):
-                load_weight = (
-                    0
-                    if (kernel_name not in ["attn_norm", "mlp_norm"])
-                    else norm_load_weight
-                )
+            for i, kernel_name in enumerate(kernel_names):
+                load_weight = (0 if (kernel_name not in ["attn_norm", "mlp_norm"]) else norm_load_weight)
 
                 load_act = load_act_list[i]
                 store_act = store_act_list[i]
                 flops = flops_list[i]
 
                 if stage == "decode":
+                    flops = int(flops // seq_len)
                     load_act = int(load_act // seq_len)
                     store_act = int(store_act // seq_len)
-                    flops = int(flops // seq_len)
-
-                load_kv_cache = (
-                    sv_matmul_load_kv_cache
-                    if (kernel_name in ["qk_matmul", "sv_matmul"] and stage == "decode")
-                    else stage == "prefill"
-                )
-
+                    
                 self._analyze_to_results(
                     stage,
                     kernel_name,
@@ -244,14 +307,46 @@ class LLMAnalyzer(object):
                     load_weight=load_weight // self.tp_size,
                     load_act=load_act // self.tp_size,
                     store_act=store_act // self.tp_size,
-                    load_kv_cache=load_kv_cache // self.tp_size,
+                    load_kv_cache=0,
                     store_kv_cache=0,
                 )
-        # 返回累积分析结果
+    
+    def analyze_model(
+        self,
+        bs: int,
+        seq_len: int,
+        generate_len: int = 0,
+        flash_attn: bool = False,
+        act_byte: int = BYTES_FP16,
+        kv_byte: int = BYTES_FP16,
+    ):
+        """
+        Analyze the model and save the results.
+        This function is used to analyze the model and save the results.
+        """
+        # 1. analyze linear layers
+        self.analyze_linear_layers(bs, seq_len, act_byte=act_byte, kv_byte=kv_byte)
+
+        # 2. analyze self attention kernels
+        self.analyze_self_atten_kernel(
+            bs, seq_len, generate_len, 
+            num_kv_heads=self.num_kv_heads, 
+            num_heads=self.num_heads, 
+            head_dim=self.head_dim, 
+            flash_attn=flash_attn, 
+            act_byte=act_byte, 
+            kv_byte=kv_byte
+        )
+
+        # 3. analyze other kernels
+        self.analyze_other_kernels(
+            bs, seq_len,
+        )
+
         return self.results
     
     @staticmethod
-    def create_layer_graph(results, base_path):
+    def create_layer_graph(model_type, results, base_path):
         from graphviz import Digraph
 
         stage_list = ["prefill", "decode"]
@@ -373,7 +468,14 @@ class LLMAnalyzer(object):
                 "output": {"dependencies": ["mlp_add"], "ops": "0", "access": "0"},
             }
 
-            if self.model_type == "qwen3":
+            if model_type == "qwen3":
+                llama_layer_graph["q_norm"] = {
+                    "dependencies": ["q_proj"],
+                    "ops": res["q_norm"]["flops"],
+                    "access": res["q_norm"]["memory_access"],
+                    "params": res["q_norm"]["load_weight"],
+                    "bound": res["q_norm"]["bound"],
+                }
                 llama_layer_graph["k_norm"] = {
                     "dependencies": ["k_proj"],
                     "ops": res["k_norm"]["flops"],
@@ -381,12 +483,12 @@ class LLMAnalyzer(object):
                     "params": res["k_norm"]["load_weight"],
                     "bound": res["k_norm"]["bound"],
                 }
-                llama_layer_graph["q_norm"] = {
-                    "dependencies": ["q_proj"],
-                    "ops": res["q_norm"]["flops"],
-                    "access": res["q_norm"]["memory_access"],
-                    "params": res["q_norm"]["load_weight"],
-                    "bound": res["q_norm"]["bound"],
+                llama_layer_graph["qk_matmul"] = {
+                    "dependencies": ["q_norm", "k_norm"],
+                    "ops": res["qk_matmul"]["flops"],
+                    "access": res["qk_matmul"]["memory_access"],
+                    "params": res["qk_matmul"]["load_weight"],
+                    "bound": res["qk_matmul"]["bound"],
                 }
 
             # Initialize the Digraph

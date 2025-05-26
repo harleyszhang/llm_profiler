@@ -18,7 +18,8 @@
         "peak_fp16_TFLOPS": 112,
         "peak_int8_TFLOPS": 224,
         "peak_int4_TFLOPS": 448,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 20480e3
     },
     "v100-sxm-32gb": {
         "name": "v100-sxm-32gb",
@@ -29,7 +30,8 @@
         "peak_fp16_TFLOPS": 112,
         "peak_int8_TFLOPS": 224,
         "peak_int4_TFLOPS": 448,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 20480e3
     },
     "br104p": {
         "name": "br104p",
@@ -52,7 +54,8 @@
         "peak_fp16_TFLOPS": 312,
         "peak_int8_TFLOPS": 624,
         "peak_int4_TFLOPS": 1248,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 27648e3
     },
     "a100-sxm-40gb": {
         "name": "a100-sxm-40gb",
@@ -64,7 +67,8 @@
         "peak_fp16_TFLOPS": 312,
         "peak_int8_TFLOPS": 624,
         "peak_int4_TFLOPS": 1248,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 27648e3
     },
     "a100-pcie-80gb": {
         "name": "a100-pcie-80gb",
@@ -76,7 +80,8 @@
         "peak_fp16_TFLOPS": 312,
         "peak_int8_TFLOPS": 624,
         "peak_int4_TFLOPS": 1248,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 27648e3
     },
     "a100-sxm-80gb": {
         "name": "a100-sxm-80gb",
@@ -88,7 +93,8 @@
         "peak_fp16_TFLOPS": 312,
         "peak_int8_TFLOPS": 624,
         "peak_int4_TFLOPS": 1248,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 27648e3
     },
     "910b-64gb": {
         "name": "910b-64gb",
@@ -111,7 +117,8 @@
         "peak_fp32_TFLOPS": 989,
         "peak_fp16_TFLOPS": 1979,
         "peak_int8_TFLOPS": 3958,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 33792e3
     },
     "h100-pcie-80gb": {
         "name": "a100-sxm-80gb",
@@ -122,7 +129,8 @@
         "peak_fp32_TFLOPS": 756,
         "peak_fp16_TFLOPS": 1513,
         "peak_int8_TFLOPS": 3026,
-        "intra_node_min_message_latency": 8e-06
+        "intra_node_min_message_latency": 8e-06,
+        "onchip_buffer": 33792e3
     },
     "a30-pcie-24gb": {
         "name": "a30-pcie-24gb",

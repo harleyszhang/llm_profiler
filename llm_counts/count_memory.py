@@ -16,7 +16,7 @@ class CountCausalLMMemory(object):
         self.num_layers = self.model_config.num_layers
         self.Vocab_size = self.model_config.vocab_size
         self.num_heads = self.model_config.num_heads
-        self.num_key_value_heads = self.model_config.num_key_value_heads
+        self.num_kv_heads = self.model_config.num_kv_heads
         self.head_dim = self.hidden_size / self.num_heads
 
         self.b = llm_configs.inference_config.bs
@@ -60,7 +60,7 @@ class CountCausalLMMemory(object):
     ):
         "self-attention kernle 可应用张量并行操作"
         qk_matmul_load_act = (
-            bs * seq_len * self.num_key_value_heads * kv_cache_bytes
+            bs * seq_len * self.num_kv_heads * kv_cache_bytes
         )  # 加载 q 和 k 张量激活
         qk_matmul_store_act = (
             bs * seq_len * seq_len * self.num_heads * kv_cache_bytes
@@ -96,21 +96,21 @@ class CountCausalLMMemory(object):
                 (self.s + generate_len)
                 * self.head_dim
                 * bs
-                * self.num_key_value_heads
+                * self.num_kv_heads
                 * kv_cache_bytes
             )
             sv_matmul_load_v_cache = (
                 (self.s + generate_len)
                 * self.head_dim
                 * bs
-                * self.num_key_value_heads
+                * self.num_kv_heads
                 * kv_cache_bytes
             )
             store_k_cache_k_linear = (
-                self.num_key_value_heads * self.head_dim * bs * seq_len * kv_cache_bytes
+                self.num_kv_heads * self.head_dim * bs * seq_len * kv_cache_bytes
             )
             store_v_cache_v_linear = (
-                self.num_key_value_heads * self.head_dim * bs * seq_len * kv_cache_bytes
+                self.num_kv_heads * self.head_dim * bs * seq_len * kv_cache_bytes
             )
 
             if seq_len == 1:
@@ -305,7 +305,7 @@ class CountCausalLMMemory(object):
         """
 
         # At least on attention head on each tensor-parallel GPU
-        num_kv_heads_per_gpu = max(self.num_key_value_heads, 1)
+        num_kv_heads_per_gpu = max(self.num_kv_heads, 1)
         memory_kv_cache_per_layer = (
             bs
             * (seq_len + generate_len)

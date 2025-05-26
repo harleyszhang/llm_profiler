@@ -107,7 +107,7 @@ class ModelConfig:
     num_heads: int  # number of attention heads
     hidden_size: int  # hidden dimension
     vocab_size: int  # vocabulary size
-    num_key_value_heads: int = None
+    num_kv_heads: int = None
     max_seq_len: int = None  # max sequence length
     intermediate_size: int = None  # hidden dimension of FFN, default to 4 * hidden_size
     model_type: str = (
@@ -120,8 +120,8 @@ class ModelConfig:
     def __post_init__(self):
         self.head_dim = self.hidden_size // self.num_heads
 
-        if self.num_key_value_heads is None:  # 如果不存在，设置默认值
-            self.num_key_value_heads = self.num_heads
+        if self.num_kv_heads is None:  # 如果不存在，设置默认值
+            self.num_kv_heads = self.num_heads
 
         if self.intermediate_size is None:
             self.intermediate_size = self.hidden_size * 4
@@ -152,7 +152,7 @@ class ModelConfig:
             num_heads=hf_config.num_attentionum_headss,
             hidden_size=hf_config.hidden_size,
             vocab_size=hf_config.vocab_size,
-            num_key_value_heads=getattr(hf_config, "num_key_value_heads", None),
+            num_kv_heads=getattr(hf_config, "num_kv_heads", None),
             max_seq_len=hf_config.max_position_embeddings,
             intermediate_size=hf_config.intermediate_size,
             model_type=hf_config.model_type,
@@ -165,19 +165,13 @@ class GPUConfig:
     # 1, gpu 型号和显存大小
     name: str  # GPU config name
     memory_GPU_in_GB: float  # memory per GPU in GB
+    onchip_buffer: float = None  # on-chip buffer size in bytes, e.g., register file size
 
     # 2, gpu 显存带宽、节点内带宽、节点间带宽
-    hbm_bandwidth_in_GB_per_sec: float  # GPU HBM bandwidth in GB/s
-    intra_node_bandwidth_in_GB_per_sec: (
-        float  # intra node GPU bandwidth in GB/s.(PCIE/NVLINK)
-    )
-    intra_node_min_message_latency: (
-        float  # minimum intra node message latency in seconds
-    )
-
-    inter_node_bandwidth_in_GB_per_sec: float = (
-        200  # inter node bandwidth in GB/s, assuming Mellanox 200Gbps HDR Infiniband
-    )
+    hbm_bandwidth_in_GB_per_sec: float=None  # GPU HBM bandwidth in GB/s
+    intra_node_bandwidth_in_GB_per_sec: float=None # intra node GPU bandwidth in GB/s.(PCIE/NVLINK)
+    intra_node_min_message_latency: float=None # minimum intra node message latency in seconds
+    inter_node_bandwidth_in_GB_per_sec: float = 200  # inter node bandwidth in GB/s, assuming Mellanox 200Gbps HDR Infiniband
 
     # 3, 不同精度的 Tensor core 的计算性能
     peak_fp32_TFLOPS: float = None  # peak Tensor TFLOPS for FP32
@@ -290,8 +284,8 @@ def get_TFLOPS_per_gpu(
 
 def get_gpu_hbm_bandwidth(
     gpu_config: GPUConfig, hbm_memory_efficiency=HBM_MEMORY_EFFICIENCY
-) -> float:
-    return gpu_config.hbm_bandwidth_in_GB_per_sec * hbm_memory_efficiency
+) -> list:
+    return gpu_config.hbm_bandwidth_in_GB_per_sec * hbm_memory_efficiency, gpu_config.onchip_buffer
 
 
 def get_intra_node_bandwidth(

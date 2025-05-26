@@ -9,7 +9,7 @@ class CountCausalLMParams(object):
         self.num_layers = model_config.num_layers
         self.Vocab_size = model_config.vocab_size
 
-        self.num_key_value_heads = model_config.num_key_value_heads
+        self.num_kv_heads = model_config.num_kv_heads
         self.head_dim = model_config.head_dim
         self.model_config = model_config
 
@@ -38,7 +38,7 @@ class CountCausalLMParams(object):
             int: the number of parameters per layer in the attention module(mha)
         """
         params_qo_proj = 2 * self.hidden_size * self.hidden_size
-        params_kv_proj = 2 * self.hidden_size * self.num_key_value_heads * self.head_dim
+        params_kv_proj = 2 * self.hidden_size * self.num_kv_heads * self.head_dim
         return params_qo_proj + params_kv_proj
 
     def count_params_per_layer_mlp(self) -> int:

@@ -333,8 +333,6 @@ class LLMAnalyzerVisual(object):
         plt.tight_layout()  # 自动调整布局
         plt.savefig(save_path, bbox_inches="tight")  # 确保保存时不截断内容
 
-   
-
     def print_format_summary_dict(self, summary_dict: dict, depth: int) -> str:
         """打印时对 params / flops / latency / memory 等进行统一转换显示。"""
         for key, value in summary_dict.items():
