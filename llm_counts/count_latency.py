@@ -34,9 +34,11 @@ class CountCausalLMLatency(object):
         self.pp_size = self.parallelism_config.pp_size
         self.num_layers_per_gpu = int(self.l / self.parallelism_config.pp_size)
 
-        self.gpu_hbm_bandwidth = (
-            get_gpu_hbm_bandwidth(self.gpu_config, HBM_MEMORY_EFFICIENCY) * 10**9
+        self.gpu_hbm_bandwidth, self.onchip_buffer = (
+            get_gpu_hbm_bandwidth(self.gpu_config, HBM_MEMORY_EFFICIENCY)
         )  # 单位 GB/s
+        self.gpu_hbm_bandwidth *= 10**9  # 转换为 B/s
+        
         self.gpu_intra_node_bandwidth = (
             get_intra_node_bandwidth(self.gpu_config, INTRA_NODE_MEMORY_EFFICIENCY)
             * 10**9
@@ -52,6 +54,18 @@ class CountCausalLMLatency(object):
             self.model_config, self.b, self.o, self.tp_size
         )
 
+    @staticmethod
+    def print_kernel_bound_info(stage, memory_latency, compute_latency, ops_type):
+        """Print the kernel bound information for the given stage."""
+        if memory_latency > compute_latency:
+            print(
+                f"{stage} stage: memory_latency {latency_to_string(memory_latency)} > compute_latency {latency_to_string(compute_latency)}, this {ops_type} layer is memory bound!"
+            )
+        else:
+            print(
+                f"{stage} stage: memory_latency {latency_to_string(memory_latency)} <= compute_latency {latency_to_string(compute_latency)}, this {ops_type} layer is compute bound!"
+            )
+
     def common_count_latency_for_ops(
         self,
         bs: int,
@@ -60,6 +74,7 @@ class CountCausalLMLatency(object):
         act_recomputation: ActivationRecomputation = ActivationRecomputation.NONE,
         ops_type: str = "qkvo_proj",
         stage="decode_",
+        print_bound: bool = False,
     ) -> float:
         """Count the latency for the forward layer or model, assuming the compute and memory operations are perfectly overlapped.
 
@@ -84,9 +99,9 @@ class CountCausalLMLatency(object):
                 * self.bytes_per_param
                 / self.tp_size
             )
-            memory_access = (
-                self.llm_memory.count_memory_access_per_layer_qkvo_proj(
-                    bs, seq_len, is_inference
+            mac = (
+                self.llm_memory.count_mac_per_layer_qkvo_proj(
+                    bs, seq_len
                 )
                 / self.tp_size
             )
@@ -96,8 +111,8 @@ class CountCausalLMLatency(object):
                 / self.tp_size
             )
             weight_memory = 0
-            memory_access = (
-                self.llm_memory.count_memory_act_per_layer_attn_kernel(
+            mac = (
+                self.llm_memory.count_mac_per_layer_attn_kernel(
                     bs, seq_len, flash_attn=False, kv_cache_bytes=BYTES_FP16
                 )
                 / self.tp_size
@@ -110,35 +125,29 @@ class CountCausalLMLatency(object):
                 * self.bytes_per_param
                 / self.tp_size
             )
-            memory_access = (
-                self.llm_memory.count_memory_access_per_layer_mlp(bs, seq_len)
+            mac = (
+                self.llm_memory.count_mac_per_layer_mlp(bs, seq_len)
                 / self.tp_size
             )
         elif ops_type == "rmsnorm":
             weight_memory = (
-                2 * self.llm_params.count_params_per_layer_rn()
+                2 * self.llm_params.count_params_per_layer_norm()
             )  # rmsnorm has no matrix weight, only vector weight, is ignored
-            flops = self.llm_flops.count_flops_per_layer_rmsnorm(
+            flops = self.llm_flops.count_flops_per_layer_norm(
                 bs, seq_len
             )  # rmsnorm is not compute bound, flops is very small
-            memory_access = self.llm_memory.count_memory_access_per_layer_rmsnorm(
+            mac = self.llm_memory.count_mac_per_layer_norm(
                 bs, seq_len
             )  # memory access
         else:
             print("error! unsupported ops_type")
 
-        memory = weight_memory + memory_access
+        memory = weight_memory + mac
         compute_latency = flops / (self.gpu_TFLOPS)  # 单位秒
         memory_latency = memory / (self.gpu_hbm_bandwidth)
 
-        if memory_latency > compute_latency:
-            print(
-                f"{stage} stage: memory_latency {latency_to_string(memory_latency)} > compute_latency {latency_to_string(compute_latency)}, this {ops_type} layer is memory bound!"
-            )
-        else:
-            print(
-                f"{stage} stage: memory_latency {latency_to_string(memory_latency)} <= compute_latency {latency_to_string(compute_latency)}, this {ops_type} layer is compute bound!"
-            )
+        if print_bound:
+            self.print_kernel_bound_info(stage, memory_latency, compute_latency, ops_type)
 
         return max(compute_latency, memory_latency)
 
@@ -229,7 +238,8 @@ class CountCausalLMLatency(object):
         Args:
             bs (int): batch size
             seq_len (int): sequence length
-            dtype_bytes (int, optional): number of bytes in the data type for the embedding weight. Defaults to BYTES_FP32.
+            dtype_bytes (int, optional): number of bytes in the data type for the embedding weight. 
+            Defaults to BYTES_FP32.
 
         Returns:
             float: the latency in seconds for the forward pass of the input embedding layer
@@ -244,7 +254,9 @@ class CountCausalLMLatency(object):
         return memory_latency + comm_latency
 
     def count_latency_output_embedding(self, bs: int, seq_len: int) -> float:
-        """Get the latency for the forward pass of the output embedding layer (computing the logits). The operation is compute bound. With tensor parallelism size > 1, an allgather communicates `bs * seq_len` elements, which is ignored here. Refer to https://arxiv.org/abs/1909.08053 for more details.
+        """Get the latency for the forward pass of the output embedding layer (computing the logits). 
+        The operation is compute bound. With tensor parallelism size > 1, an allgather communicates `bs * seq_len` elements, 
+        which is ignored here. Refer to https://arxiv.org/abs/1909.08053 for more details.
 
         Args:
             bs (int): batch size
@@ -283,14 +295,14 @@ class CountCausalLMLatency(object):
         if not use_kv_cache:
             return 0
 
-        kv_cache_memory_access = (
-            self.llm_memory.count_memory_access_per_layer_kv_cache(
+        kv_cache_mac = (
+            self.llm_memory.count_mac_per_layer_kv_cache(
                 bs, seq_len, generate_len, flash_attn, kv_cache_bytes
             )
             / self.tp_size
         )
 
-        memory_latency = kv_cache_memory_access / (self.gpu_hbm_bandwidth)
+        memory_latency = kv_cache_mac / (self.gpu_hbm_bandwidth)
 
         return memory_latency
 

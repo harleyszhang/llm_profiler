@@ -1,4 +1,44 @@
+import pprint
 from .constants import *
+
+class Formatter(object):
+    @classmethod
+    def format_value(cls, value, category):
+        """根据类别统一格式化 value."""
+        if category == "params" or category == "flops":
+            return num_to_string(value)
+        elif category == "latency":
+            return latency_to_string(value)
+        elif category == "memory":
+            return f"{num_to_string(value)}B"
+        return value  # 如果没有匹配，返回原值
+
+    @classmethod
+    def print_format_summary_dict(
+        cls, summary_dict: dict, depth: int, category="params"
+    ) -> str:
+        """打印时对 params / flops / latency / memory 等进行统一转换显示。"""
+
+        def recursive_format(dictionary, current_depth):
+            if current_depth <= 0:  # 深度限制
+                return dictionary
+
+            formatted_dict = {}
+            for key, value in dictionary.items():
+                if isinstance(value, dict):  # 如果是子字典，递归格式化
+                    formatted_dict[key] = recursive_format(value, current_depth - 1)
+                elif "max_bs" in key or "max_batch_total" in key:  # 格式化具体值
+                    formatted_dict[key] = value
+                else:
+                    formatted_dict[key] = cls.format_value(value, category)
+            return formatted_dict
+
+        # 开始递归格式化
+        formatted_summary = recursive_format(summary_dict, depth)
+
+        # 打印格式化后的字典
+        pprint.pprint(formatted_summary, indent=4, sort_dicts=False)
+        return formatted_summary  # 返回格式化后的字典
 
 
 def print_list(list):

@@ -3,6 +3,7 @@
 
 import math, json
 from .constants import *
+from typing import Optional
 from dataclasses import dataclass
 from enum import Enum
 from functools import total_ordering
@@ -103,13 +104,14 @@ class ParallelismConfig:
 
 @dataclass
 class ModelConfig:
-    num_layers: int  # number of transformer layers (blocks)
-    num_heads: int  # number of attention heads
-    hidden_size: int  # hidden dimension
-    vocab_size: int  # vocabulary size
-    num_kv_heads: int = None
-    max_seq_len: int = None  # max sequence length
-    intermediate_size: int = None  # hidden dimension of FFN, default to 4 * hidden_size
+    num_layers: Optional[int] = None  # number of transformer layers (blocks)
+    num_heads: Optional[int] = None  # number of attention heads
+    head_dim: Optional[int] = None          # <— 新增：允许显式传入
+    hidden_size: Optional[int] = None  # hidden dimension
+    vocab_size: Optional[int] = None  # vocabulary size
+    num_kv_heads: Optional[int] = None
+    max_seq_len: Optional[int] = None  # max sequence length
+    intermediate_size: Optional[int] = None  # hidden dimension of FFN, default to 4 * hidden_size
     model_type: str = (
         None  # model type as tagged on Hugging Face (e.g., gpt2, opt, llama.)
     )
@@ -117,15 +119,28 @@ class ModelConfig:
         None  # model name as tagged on Hugging Face (e.g., gpt2-xl, opt, llama-13b.)
     )
 
-    def __post_init__(self):
-        self.head_dim = self.hidden_size // self.num_heads
-
-        if self.num_kv_heads is None:  # 如果不存在，设置默认值
+    # -------- post-init 逻辑 -------- #
+    def __post_init__(self) -> None:
+        # ① KV-heads 默认 = Q-heads
+        if self.num_kv_heads is None:
             self.num_kv_heads = self.num_heads
 
+        # ② FFN 维度默认 = 4×hidden_size
         if self.intermediate_size is None:
             self.intermediate_size = self.hidden_size * 4
-            self.intermediate_size = self.intermediate_size
+
+        # ③ **核心：head_dim 计算**  
+        #    若用户 / HF config 已提供，则直接用；否则按经典公式推断
+        if self.head_dim is None:
+            self.head_dim = self.hidden_size // self.num_heads
+
+            # ④ 一致性检查（可选：遇到 MoE/GQA 可放宽）
+            assert (
+                self.hidden_size == self.head_dim * self.num_heads
+            ), (
+                "hidden_size 与 num_heads×head_dim 不一致；"
+                "若模型采用变体架构，请显式指定 head_dim"
+            )
 
     @classmethod
     def from_pretrained(
@@ -250,7 +265,7 @@ def get_model_and_gpu_config_by_name(
                 f"model name {model_name} is not found in {model_config_path} so need to apply transformers AutoConfig"
             )
             # 加载模型配置
-            model_config = ModelConfig.from_pretrained("meta-llama/Llama-3.2-1B")
+            model_config = ModelConfig.from_pretrained(model_name, trust_remote_code=True)
 
     with open(gpu_config_path, "r") as f:
         config_json = json.load(f)  # 类似于 dict 类型

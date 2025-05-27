@@ -50,9 +50,9 @@ class LLMAnalyzerVisual(object):
 
         self.gpu_memory_in_GB = (
             llm_configs.gpu_config.memory_GPU_in_GB * 10**9
-        )  # 单位: B
+        ) 
 
-        # 初始化各种计数器
+
         self.llm_params = CountCausalLMParams(self.model_config)
         self.llm_flops = CountCausalLMFlops(
             self.model_config, self.b, self.s, self.tp_size
@@ -76,14 +76,14 @@ class LLMAnalyzerVisual(object):
         hbm_memory_efficiency: float = HBM_MEMORY_EFFICIENCY,
         intra_node_memory_efficiency=INTRA_NODE_MEMORY_EFFICIENCY,
         inter_node_memory_efficiency=INTER_NODE_MEMORY_EFFICIENCY,
-        print_flag=True,
-        visual_flag=True,
+        print_flag=False,
+        visual_flag=False,
     ) -> dict:
         """LLM inference analysis given the llm configs and inputs."""
 
         if self.model_config.max_seq_len is not None:
             assert seq_len + generate_len <= self.model_config.max_seq_len, (
-                f"seq_len {seq_len} + generate_len {generate_len} 超过了模型的 max_seq_len {self.model_config.max_seq_len}"
+                f"seq_len {seq_len} + generate_len {generate_len} Exceeding the model max_seq_len {self.model_config.max_seq_len}"
             )
 
         if self.l % self.pp_size != 0:
@@ -135,7 +135,6 @@ class LLMAnalyzerVisual(object):
                 generate_len,
                 is_inference=True,
                 flash_attn=False,
-                use_kv_cache=use_kv_cache,
                 act_recomputation=ActivationRecomputation.NONE,
                 qkvo_proj_dtype_bytes=qkvo_proj_dtype_bytes,
                 mlp_act_dtype_bytes=mlp_act_dtype_bytes,
@@ -164,15 +163,14 @@ class LLMAnalyzerVisual(object):
         )
 
         infer_result_dict = {
-            "model_params": num_params_model,
-            "totoal_memory": memory_decode_summary_dict["decode_memory_total"],
+            "weight_memory_per_gpu": memory_prefill_summary_dict["weight_memory_per_gpu"],
+            "consume_memory_per_gpu": memory_decode_summary_dict["consume_memory_per_gpu"],
             "prefill_flops": prefill_num_flops_model,
             "decode_flops_per_step": decode_num_flops_model,
             "prefill_first_token_latency": prefill_latency_breakdown["prefill_latency"],
             "decode_per_token_latency": decode_latency_breakdown["decode_latency"],
             "kv_cache_latency": decode_latency_breakdown["kv_cache_latency"],
-            "total_infer_latency": prefill_latency_breakdown["prefill_latency"]
-            + decode_latency_breakdown["decode_latency"] * generate_len,
+            "total_infer_latency": prefill_latency_breakdown["prefill_latency"] + decode_latency_breakdown["decode_latency"] * generate_len,
             "support_max_batch_total_tokens": memory_decode_summary_dict[
                 "max_batch_total_tokens"
             ],
@@ -180,12 +178,13 @@ class LLMAnalyzerVisual(object):
 
         # --------------------------- 5. Memory Access ----------------------
         if visual_flag:
-            llm_analyzer = LLMAnalyzer(self.llm_configs)
-            results = llm_analyzer.count_flops_mac(bs=bs, seq_len=seq_len, generate_len=generate_len)
+            model_type = self.model_config.model_type
+            llm_analyzer = LLMAnalyzer(self.model_config, self.gpu_config, tp_size=self.tp_size)
+            results = llm_analyzer.analyze_model(bs=bs, seq_len=seq_len, generate_len=generate_len)
 
             # -------------------------- 绘图：模型 graph 图示例 --------------------------
             base_path = f"_{self.model_config.model_name}_tp{self.tp_size}_bs{self.b}_seqlen{self.s}_genlen{self.o}.png"
-            llm_analyzer.create_layer_graph(results, base_path)
+            llm_analyzer.create_layer_graph(model_type, results, base_path)
             self.print_format_summary_dict(results, get_dict_depth(results))
 
             # -------------------------- 绘图：Pie 图示例 --------------------------
@@ -219,7 +218,7 @@ class LLMAnalyzerVisual(object):
                 decode_latency_pie_save_path,
             )
 
-        # ------------------- 打印性能分析细节 & 可视化 --------------------
+        # ------------------------- 6. print layer details --------------------
         if print_flag:
             print(
                 "\n-------------------------- LLM main infer config --------------------------"
@@ -355,43 +354,3 @@ class LLMAnalyzerVisual(object):
                     self.print_format_summary_dict(value, get_dict_depth(value) - 1)
         if depth >= 1:
             pprint.pprint(summary_dict, indent=4, sort_dicts=False)
-
-
-class Formatter(object):
-    @classmethod
-    def format_value(cls, value, category):
-        """根据类别统一格式化 value."""
-        if category == "params" or category == "flops":
-            return num_to_string(value)
-        elif category == "latency":
-            return latency_to_string(value)
-        elif category == "memory":
-            return f"{num_to_string(value)}B"
-        return value  # 如果没有匹配，返回原值
-
-    @classmethod
-    def print_format_summary_dict(
-        cls, summary_dict: dict, depth: int, category="params"
-    ) -> str:
-        """打印时对 params / flops / latency / memory 等进行统一转换显示。"""
-
-        def recursive_format(dictionary, current_depth):
-            if current_depth <= 0:  # 深度限制
-                return dictionary
-
-            formatted_dict = {}
-            for key, value in dictionary.items():
-                if isinstance(value, dict):  # 如果是子字典，递归格式化
-                    formatted_dict[key] = recursive_format(value, current_depth - 1)
-                elif "max_bs" in key or "max_batch_total" in key:  # 格式化具体值
-                    formatted_dict[key] = value
-                else:
-                    formatted_dict[key] = cls.format_value(value, category)
-            return formatted_dict
-
-        # 开始递归格式化
-        formatted_summary = recursive_format(summary_dict, depth)
-
-        # 打印格式化后的字典
-        pprint.pprint(formatted_summary, indent=4, sort_dicts=False)
-        return formatted_summary  # 返回格式化后的字典

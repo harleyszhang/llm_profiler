@@ -85,9 +85,10 @@
     },
     "Qwen3-8B": {
         "num_layers": 36,
+        "head_dim": 128,
+        "hidden_size": 4096,
         "num_heads": 32,
         "num_kv_heads": 8,
-        "hidden_size": 4096,
         "intermediate_size": 12288,
         "vocab_size": 151936,
         "max_seq_len": 40960,
@@ -96,9 +97,10 @@
     },
     "Qwen3-32B": {
         "num_layers": 64,
+        "head_dim": 128,
+        "hidden_size": 5120,
         "num_heads": 64,
         "num_kv_heads": 8,
-        "hidden_size": 5120,
         "intermediate_size": 25600,
         "vocab_size": 151936,
         "max_seq_len": 40960,

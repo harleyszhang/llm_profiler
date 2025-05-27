@@ -1,8 +1,7 @@
-from .utils.config import LLMConfigs
 from .utils.constants import BYTES_FP16
 from .utils.config import *
-from .roofline_model import roofline_analysis
 from .utils.utils import num_to_string
+from .roofline_model import roofline_analysis
 
 
 class LLMAnalyzer(object):
@@ -22,15 +21,27 @@ class LLMAnalyzer(object):
         self.head_dim = self.hidden_size // self.num_heads
 
         # attention linear layers
-        self.linear_layers = {
-            "q_proj": [self.hidden_size, self.hidden_size],
-            "k_proj": [self.hidden_size, self.hidden_size * self.num_kv_heads / self.num_heads],
-            "v_proj": [self.hidden_size, self.hidden_size * self.num_kv_heads / self.num_heads],
-            "out_proj": [self.hidden_size, self.hidden_size],
-            "gate_proj": [self.hidden_size, self.intermediate_size],
-            "up_proj": [self.hidden_size, self.intermediate_size],
-            "down_proj": [self.intermediate_size, self.hidden_size],
-        }
+        if model_config.model_name == "Qwen3-32B":
+            self.linear_layers = {
+                "q_proj": [self.hidden_size, self.num_heads * self.head_dim],
+                "k_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+                "v_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+                "out_proj": [self.num_heads * self.head_dim, self.hidden_size],
+                
+                "gate_proj": [self.hidden_size, self.intermediate_size],
+                "up_proj": [self.hidden_size, self.intermediate_size],
+                "down_proj": [self.intermediate_size, self.hidden_size],
+            }
+        else:
+            self.linear_layers = {
+                "q_proj": [self.hidden_size, self.hidden_size],
+                "k_proj": [self.hidden_size, self.hidden_size * self.num_kv_heads / self.num_heads],
+                "v_proj": [self.hidden_size, self.hidden_size * self.num_kv_heads / self.num_heads],
+                "out_proj": [self.hidden_size, self.hidden_size],
+                "gate_proj": [self.hidden_size, self.intermediate_size],
+                "up_proj": [self.hidden_size, self.intermediate_size],
+                "down_proj": [self.intermediate_size, self.hidden_size],
+            }
 
         self.results = {"decode": {}, "prefill": {}}
 

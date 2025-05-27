@@ -13,7 +13,7 @@ H100_SXM_GPU = {"fp16_tflops": 989, "hbm_bw": 3.35}  # 不开启稀疏计算
 H20_SXM_GPU = {"fp16_tflops": 148, "hbm_bw": 4.0}
 
 
-def roofline_analysis(peak_flops, bandwidth, flops, memory_access_bytes):
+def roofline_analysis(peak_flops, bandwidth, flops, mac_bytes):
     """
     Analyzes the roofline model and returns the arithmetic intensity, attainable FLOPs,
     and the bounding factor (memory or compute).
@@ -22,7 +22,7 @@ def roofline_analysis(peak_flops, bandwidth, flops, memory_access_bytes):
         - bandwidth: Peak memory bandwidth in bytes per second.
         - peak_flops: Peak floating-point performance in FLOP/s.
         - flops: Total floating-point operations.
-        - memory_access_bytes: Total memory access in bytes.
+        - mac_bytes: Total memory access in bytes.
 
     Returns:
         - arithmetic_intensity: Operations per byte.
@@ -30,7 +30,7 @@ def roofline_analysis(peak_flops, bandwidth, flops, memory_access_bytes):
         - bound: The limiting factor ('memory' or 'compute').
     """
     # Calculate arithmetic intensity and turning point
-    arithmetic_intensity = flops / memory_access_bytes
+    arithmetic_intensity = flops / mac_bytes
     turning_point = peak_flops / bandwidth
 
     # Determine the bound and attainable FLOPs
@@ -53,7 +53,7 @@ def plot_model_roofline_graph(model_data, gpus, colors, labels):
         - peak_perf: Peak Floating Point Performance, TFLOPS
         - mem_bw:Peak Memory Bandwidth, tb/s
     """
-    flops, memory_access, model_name = (
+    flops, mac, model_name = (
         model_data[0] / 1e12,
         model_data[1] / 1e12,
         model_data[2],
@@ -72,7 +72,7 @@ def plot_model_roofline_graph(model_data, gpus, colors, labels):
         )
 
         ai, attainable_flops, bound = roofline_analysis(
-            peak_flops, bw, flops, memory_access
+            peak_flops, bw, flops, mac
         )
         attainable_tflops = attainable_flops
         plt.scatter(
@@ -114,13 +114,13 @@ if __name__ == "__main__":
     analyzer = ModelAnalyzer(model_id, hardware, "llm_roofline/configs/Llama.py")
     results = analyzer.analyze(batchsize=b, seqlen=s, use_flashattention=True)
     total_flops = results["total_results"]["prefill"]["OPs"]
-    total_memory_access = results["total_results"]["prefill"]["memory_access"]
+    total_mac = results["total_results"]["prefill"]["mac"]
     print(
         "llama13b model's flops and memory access is %2.f TFLOPs %2.f GB"
-        % (total_flops / 1e12, total_memory_access / 1e9)
+        % (total_flops / 1e12, total_mac / 1e9)
     )
 
-    model_data = [total_flops, total_memory_access, "llama13b"]
+    model_data = [total_flops, total_mac, "llama13b"]
     gpus = [
         HW_910B,
         RTX4090_PCIE_GPU,

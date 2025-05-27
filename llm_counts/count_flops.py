@@ -14,8 +14,9 @@ class CountCausalLMFlops(object):
         bs: int,
         seq_len: int,
         tp_size: int,
-        simp_count=False,
     ) -> None:
+        self.model_type = model_config.model_type
+        self.head_dim = model_config.head_dim
         self.hidden_size = model_config.hidden_size
         self.intermediate_size = model_config.intermediate_size
         self.l = model_config.num_layers
@@ -24,10 +25,6 @@ class CountCausalLMFlops(object):
         self.b = bs
         self.s = seq_len
         self.tp_size = tp_size
-
-        if not simp_count:
-            llm_params = CountCausalLMParams(model_config)
-            self.model_flops = llm_params(self.hidden_size, self.l, self.V) * 2
 
     def count_flops_per_layer_qkvo_proj(self, bs: int, seq_len: int) -> int:
         """Get the number of floating point operations (flops) for the forward
@@ -55,13 +52,15 @@ class CountCausalLMFlops(object):
         return qkvo_proj_flops
 
     def count_flops_per_layer_attn_kernel(self, bs: int, seq_len: int) -> int:
+        q_norm_flops = bs * 4 * seq_len * self.head_dim
+        k_norm_flops = q_norm_flops
         qk_matmul_flops = bs * 2 * seq_len * seq_len * self.hidden_size
         sv_matmul_flops = bs * 2 * seq_len * seq_len * self.hidden_size
         softmax_flops = (
             bs * 3 * seq_len * self.hidden_size
         )  # e^x / sum(e^x); bs = 1 和 seq_len = 1 时 flops 为 3d-1, 张量中每个元素约执行 3 次操作
 
-        flops_self_attention_kernel = qk_matmul_flops + sv_matmul_flops + softmax_flops
+        flops_self_attention_kernel = q_norm_flops + k_norm_flops + qk_matmul_flops + sv_matmul_flops + softmax_flops
 
         return flops_self_attention_kernel
 
@@ -76,7 +75,7 @@ class CountCausalLMFlops(object):
 
         return flops_gate_proj + flops_up_proj + flops_down_proj
 
-    def count_flops_per_layer_rmsnorm(self, bs: int, seq_len: int) -> int:
+    def count_flops_per_layer_norm(self, bs: int, seq_len: int) -> int:
         """flops of 2 rmsnrom per layer"""
         return bs * 4 * seq_len * self.hidden_size
 
@@ -87,7 +86,7 @@ class CountCausalLMFlops(object):
             bs, seq_len
         )
         flops_per_layer_rmsnorm = (
-            self.count_flops_per_layer_rmsnorm(bs, seq_len) * 2
+            self.count_flops_per_layer_norm(bs, seq_len) * 2
         )  # atten_rmsnorm mlp_rmsnorm
         flops_positional_embedding = self.count_flops_positional_embedding()
 

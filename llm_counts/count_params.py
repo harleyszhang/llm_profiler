@@ -9,9 +9,10 @@ class CountCausalLMParams(object):
         self.num_layers = model_config.num_layers
         self.Vocab_size = model_config.vocab_size
 
+        self.num_heads = model_config.num_heads
         self.num_kv_heads = model_config.num_kv_heads
         self.head_dim = model_config.head_dim
-        self.model_config = model_config
+        self.model_type = model_config.model_type
 
     def count_params_embedding(self, shared_embedding: bool = True) -> int:
         """Get the number of parameters in the embedding layer. params_te = vocab_size * d_model
@@ -37,7 +38,8 @@ class CountCausalLMParams(object):
         Returns:
             int: the number of parameters per layer in the attention module(mha)
         """
-        params_qo_proj = 2 * self.hidden_size * self.hidden_size
+
+        params_qo_proj = 2 * self.hidden_size * self.num_heads * self.head_dim
         params_kv_proj = 2 * self.hidden_size * self.num_kv_heads * self.head_dim
         return params_qo_proj + params_kv_proj
 
@@ -55,20 +57,24 @@ class CountCausalLMParams(object):
 
         return params_mlp
 
-    def count_params_per_layer_rn(self, dtype=BYTES_FP16) -> int:
+    def count_params_per_layer_norm(self) -> int:
         """Get the number of parameters per layer in the two layer normalization module.
-        params_rn = 4 * d_model
+        params_norm = 4 * d_model
 
         Returns:
             int: the number of parameters per layer in the two layer normalization module
         """
-        return 2 * self.hidden_size
+        # q_norm、k_norm、atten_norm、mlp_norm
+        if self.model_type == "qwen3":
+            return 2 * self.hidden_size + 2 * self.head_dim
+        else:
+            return 2 * self.hidden_size
 
-    def count_params_per_layer(self, ln_ignore=False) -> tuple:
+    def count_params_per_layer(self, norm_ignore=False) -> tuple:
         """Get the number of params per layer in the transformer decoder blocks,
         mainly including the attention and MLP layers
 
-        params_per_layer = params_mha + params_mlp + params_rn
+        params_per_layer = params_mha + params_mlp + params_norm
                          = 4d_model^2 + 8d_model^2 + 2*4d_model = 12d_model^2 + 8d_model
 
         Return:
@@ -76,17 +82,17 @@ class CountCausalLMParams(object):
         """
         params_per_layer_mha = self.count_params_per_layer_mha()
         params_per_layer_mlp = self.count_params_per_layer_mlp()
-        params_per_layer_rn = 0 if ln_ignore else self.count_params_per_layer_rn()
+        params_per_layer_norm = 0 if norm_ignore else self.count_params_per_layer_norm()
         params_input_embedding = self.count_params_embedding()
 
         params_per_layer = (
-            params_per_layer_mha + params_per_layer_mlp + params_per_layer_rn
+            params_per_layer_mha + params_per_layer_mlp + params_per_layer_norm
         )
 
         dict_params_per_layer = {
             "qkvo_proj": params_per_layer_mha,
             "mlp": params_per_layer_mlp,
-            "rmsnorm": params_per_layer_rn,
+            "rmsnorm": params_per_layer_norm,
             "input_embedding": params_input_embedding,
             "output_embedding": params_input_embedding,
         }
@@ -100,13 +106,9 @@ class CountCausalLMParams(object):
         Returns:
             int: the total number of parameters in the model
         """
-        params_per_layer, dict_params_per_layer = self.count_params_per_layer()
+        params_per_layer, _ = self.count_params_per_layer()
         params_model = (
             params_per_layer * self.num_layers + self.count_params_embedding()
         )
 
         return params_model
-
-    def __call__(self, hidden_size, num_layers, vocab_size) -> int:
-        """Simplified estimation of model parameters"""
-        return vocab_size * hidden_size + 12 * hidden_size**2 * num_layers
