@@ -70,8 +70,7 @@ class CountCausalLMLatency(object):
         self,
         bs: int,
         seq_len: int,
-        is_inference=True,
-        act_recomputation: ActivationRecomputation = ActivationRecomputation.NONE,
+        generate_len: int = 0,
         ops_type: str = "qkvo_proj",
         stage="decode_",
         print_bound: bool = False,
@@ -88,6 +87,7 @@ class CountCausalLMLatency(object):
         Returns:
             float: the latency in seconds for the forward pass
         """
+        ops_type = ops_type.lower()
 
         if ops_type == "qkvo_proj":
             flops = (
@@ -98,25 +98,27 @@ class CountCausalLMLatency(object):
                 self.llm_params.count_params_per_layer_mha()
                 * self.bytes_per_param
                 / self.tp_size
-            )
+            ) * BYTES_FP16
             mac = (
                 self.llm_memory.count_mac_per_layer_qkvo_proj(
                     bs, seq_len
                 )
                 / self.tp_size
             )
+            memory = weight_memory + mac
         elif ops_type == "attn_kernel":
             flops = (
-                self.llm_flops.count_flops_per_layer_attn_kernel(bs, seq_len)
+                self.llm_flops.count_flops_per_layer_attn_kernel(bs, seq_len, generate_len)
                 / self.tp_size
             )
             weight_memory = 0
             mac = (
                 self.llm_memory.count_mac_per_layer_attn_kernel(
-                    bs, seq_len, flash_attn=False, kv_cache_bytes=BYTES_FP16
+                    bs, seq_len, generate_len, kv_cache_bytes=BYTES_FP16
                 )
                 / self.tp_size
             )
+            memory = weight_memory + mac
 
         elif ops_type == "mlp":
             flops = self.llm_flops.count_flops_per_layer_mlp(bs, seq_len) / self.tp_size
@@ -124,25 +126,22 @@ class CountCausalLMLatency(object):
                 self.llm_params.count_params_per_layer_mlp()
                 * self.bytes_per_param
                 / self.tp_size
-            )
+            ) * BYTES_FP16
             mac = (
                 self.llm_memory.count_mac_per_layer_mlp(bs, seq_len)
                 / self.tp_size
             )
+            memory = weight_memory + mac
         elif ops_type == "rmsnorm":
-            weight_memory = (
-                2 * self.llm_params.count_params_per_layer_norm()
-            )  # rmsnorm has no matrix weight, only vector weight, is ignored
-            flops = self.llm_flops.count_flops_per_layer_norm(
-                bs, seq_len
-            )  # rmsnorm is not compute bound, flops is very small
-            mac = self.llm_memory.count_mac_per_layer_norm(
-                bs, seq_len
-            )  # memory access
+            # Two RMSNorm operations (pre‑attention & pre‑MLP) share the same
+            # vector weight, replicated across TP ranks.
+            weight_memory = 2 * self.llm_params.count_params_per_layer_norm() * BYTES_FP16
+            flops = self.llm_flops.count_flops_per_layer_norm(bs, seq_len)
+            mac = self.llm_memory.count_mac_per_layer_norm(bs, seq_len)
+            memory = weight_memory + mac
         else:
-            print("error! unsupported ops_type")
+            raise ValueError(f"Unsupported ops_type: {ops_type}")
 
-        memory = weight_memory + mac
         compute_latency = flops / (self.gpu_TFLOPS)  # 单位秒
         memory_latency = memory / (self.gpu_hbm_bandwidth)
 
@@ -184,49 +183,35 @@ class CountCausalLMLatency(object):
         self,
         bs: int,
         seq_len: int,
-        generate_len,
-        is_inference: bool = True,
-        use_kv_cache=True,
+        generate_len: int = 0,
         flash_attn=False,
-        act_recomputation: ActivationRecomputation = ActivationRecomputation.NONE,
         rmsnorm_dtype_bytes: int = BYTES_FP16,
         kv_cache_bytes: int = BYTES_FP16,
     ) -> tuple:
-        latency_per_layer_qkvo_proj = self.common_count_latency_for_ops(
-            bs, seq_len, is_inference, act_recomputation, ops_type="qkvo_proj"
-        )
-        latency_per_layer_attn_kernel = self.common_count_latency_for_ops(
-            bs, seq_len, is_inference, act_recomputation, ops_type="attn_kernel"
-        )
+        kernel_latency_per_layer = 0.0
+        dict_latency_per_layer = dict()
+        ops_list = ["qkvo_proj", "attn_kernel", "mlp", "rmsnorm"]
 
-        latency_per_layer_mlp = self.common_count_latency_for_ops(
-            bs, seq_len, is_inference, act_recomputation, ops_type="mlp"
-        )
-        latency_per_layer_rmsnorm = self.common_count_latency_for_ops(
-            bs, seq_len, is_inference, act_recomputation, "rmsnorm"
-        )
+        for ops_name in ops_list:
+            kernel_latency = self.common_count_latency_for_ops(
+                bs, seq_len, generate_len, ops_name,
+            )
+            dict_latency_per_layer[ops_name] = kernel_latency
+            kernel_latency_per_layer += kernel_latency
+
         latency_per_layer_tp_comm = self.count_latency_per_layer_tp_comm(bs, seq_len)
-
         kv_cache_latency = self.count_latency_kv_cache_per_layer(
-            bs, seq_len, generate_len, use_kv_cache, flash_attn, kv_cache_bytes
+            bs, seq_len, generate_len, flash_attn, kv_cache_bytes
         )
 
         latency_per_layer = (
-            latency_per_layer_qkvo_proj
-            + latency_per_layer_mlp
-            + 2 * latency_per_layer_rmsnorm  # 2 个 rmsnorm 层
+            kernel_latency_per_layer
             + latency_per_layer_tp_comm  # 一次 AllReduce 产生的通讯量为 2bsh, llm 推理每层 layer 需要
             + kv_cache_latency
         )
 
-        dict_latency_per_layer = {
-            "qkvo_proj": (latency_per_layer_qkvo_proj),
-            "attn_kernel": (latency_per_layer_attn_kernel),
-            "mlp": (latency_per_layer_mlp),
-            "rmsnorm": (2 * latency_per_layer_rmsnorm),
-            "tp_comm": (latency_per_layer_tp_comm),
-            "kv_cache_rw": (kv_cache_latency),
-        }
+        dict_latency_per_layer["tp_comm"] = latency_per_layer_tp_comm
+        dict_latency_per_layer["kv_cache_rw"] = kv_cache_latency
 
         return latency_per_layer, dict_latency_per_layer
 
@@ -277,7 +262,6 @@ class CountCausalLMLatency(object):
         bs: int,
         seq_len: int,
         generate_len: int,
-        use_kv_cache: bool = True,
         flash_attn: bool = False,
         kv_cache_bytes: int = BYTES_FP16,
     ) -> tuple:
@@ -287,14 +271,10 @@ class CountCausalLMLatency(object):
             bs (int): batch size
             seq_len (int): sequence length
             generate_len (int): number of tokens to generate
-            use_kv_cache (bool, optional): whether the key and value cache is used. Defaults to True.
 
         Returns:
             float: the latency in seconds for the forward pass of the key and value cache in a transformer layer
         """
-        if not use_kv_cache:
-            return 0
-
         kv_cache_mac = (
             self.llm_memory.count_mac_per_layer_kv_cache(
                 bs, seq_len, generate_len, flash_attn, kv_cache_bytes
@@ -311,10 +291,7 @@ class CountCausalLMLatency(object):
         bs: int,
         seq_len: int,
         generate_len: int,
-        is_inference: bool = True,
-        use_kv_cache: bool = True,
         flash_attn: bool = False,
-        act_recomputation: ActivationRecomputation = ActivationRecomputation.NONE,
         rmsnorm_dtype_bytes: int = BYTES_FP32,
         kv_cache_bytes: int = BYTES_FP16,
         breakdown_prefix: str = "",
@@ -323,10 +300,7 @@ class CountCausalLMLatency(object):
             bs,
             seq_len,
             generate_len,
-            is_inference,
-            use_kv_cache,
             flash_attn,
-            act_recomputation,
             rmsnorm_dtype_bytes,
             kv_cache_bytes,
         )
@@ -366,22 +340,16 @@ class CountCausalLMLatency(object):
         bs: int,
         seq_len: int,
         generate_len: int,
-        is_inference: bool = True,
-        use_kv_cache: bool = True,
         flash_attn: bool = False,
         kv_cache_bytes: int = BYTES_FP16,
         rmsnorm_dtype_bytes: int = BYTES_FP32,
-        act_recomputation: ActivationRecomputation = ActivationRecomputation.NONE,
     ) -> tuple:
         # 1, 预填充阶段
         prefill_latency, prefill_latency_breakdown = self.count_latency_model(
             bs,
             seq_len,
             generate_len=0,
-            is_inference=is_inference,
-            use_kv_cache=use_kv_cache,
             flash_attn=flash_attn,
-            act_recomputation=act_recomputation,
             rmsnorm_dtype_bytes=rmsnorm_dtype_bytes,
             kv_cache_bytes=kv_cache_bytes,
             breakdown_prefix="prefill_",
@@ -395,17 +363,14 @@ class CountCausalLMLatency(object):
 
         # 2, 解码阶段
         kv_cache_latency = self.count_latency_kv_cache_per_layer(
-            bs, seq_len, generate_len, use_kv_cache, flash_attn, kv_cache_bytes
+            bs, seq_len, generate_len, flash_attn, kv_cache_bytes
         )
 
         decode_model_latency, decode_latency_breakdown = self.count_latency_model(
             bs,
             1,
             generate_len=generate_len,
-            is_inference=is_inference,
-            use_kv_cache=use_kv_cache,
             flash_attn=flash_attn,
-            act_recomputation=act_recomputation,
             rmsnorm_dtype_bytes=rmsnorm_dtype_bytes,
             kv_cache_bytes=kv_cache_bytes,
             breakdown_prefix="decode_",

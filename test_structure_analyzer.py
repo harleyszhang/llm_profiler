@@ -48,7 +48,7 @@ def test_llm_analyzer(
 
 if __name__ == "__main__":
     test_llm_analyzer(
-        model_name="Qwen3-8B",
+        model_name="Qwen3-32B",
         gpu_name="a100-sxm-80gb",
         bs=1,
         seq_len=522,

@@ -74,7 +74,6 @@ class InferenceConfig:
     seq_len: int = 522  # input sequence length
     generate_len: int = 1526  # number of tokens to generate
     context_len: int = None  # context length
-    use_kv_cache: bool = True  # whether to use key/value cache
     bytes_per_param: int = BYTES_FP16  # model weight bytes
     act_dtype_bytes: int = BYTES_FP16  # activation data type bytes
     kv_cache_bytes: int = BYTES_FP16  # key/value cache data type bytes

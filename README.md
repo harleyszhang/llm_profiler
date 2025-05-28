@@ -29,7 +29,6 @@ def llm_profile(model_name="llama-13b",
                 tp_size: int = 1,
                 pp_size: int = 1,
                 sp_size: int = 1,
-                use_kv_cache: bool = True,
                 layernorm_dtype_bytes: int = BYTES_FP16,
                 kv_cache_bytes: int = BYTES_FP16,
                 flops_efficiency: float = FLOPS_EFFICIENCY,
@@ -51,7 +50,6 @@ def llm_profile(model_name="llama-13b",
         tp_size (int, optional): tensor parallelism size. Defaults to 1.
         pp_size (int, optional): pipeline parallelism size. Defaults to 1.
         sp_size (int, optional): sequence parallelism size. Defaults to 1.
-        use_kv_cache (bool, optional): Whether or not the model should use the past last key/values attentions (if applicable to the model) to
             speed up decoding. Defaults to True.
         layernorm_dtype_bytes (int, optional): number of bytes in the data type for the layernorm activations.. Defaults to BYTES_FP16.
         kv_cache_bytes (int, optional): number of bytes in the data type for the kv_cache. Defaults to None.
@@ -74,8 +72,7 @@ def llm_profile(model_name="llama-13b",
                             'seq_len': 128,
                             'tp_size': 4,
                             'pp_size': 1,
-                            'generate_len': 2048,
-                            'use_kv_cache': True},
+                            'generate_len': 2048,},
     'gpu_config': {   'name': 'a100-sxm-80gb',
                       'memory_GPU_in_GB': '80 GB',
                       'gpu_hbm_bandwidth': '2039 GB/s',

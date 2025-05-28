@@ -65,9 +65,6 @@ class LLMAnalyzerVisual(object):
         bs: int = 1,
         seq_len: int = 522,
         generate_len: int = 1526,
-        is_inference: bool = True,
-        use_kv_cache: bool = True,
-        act_recomputation: ActivationRecomputation = ActivationRecomputation.NONE,
         act_dtype_bytes: int = BYTES_FP16,
         kv_cache_bytes: int = BYTES_FP16,
         qkvo_proj_dtype_bytes: int = BYTES_FP16,
@@ -99,7 +96,6 @@ class LLMAnalyzerVisual(object):
                 "tp_size": self.tp_size,
                 "pp_size": self.pp_size,
                 "generate_len": generate_len,
-                "use_kv_cache": use_kv_cache,
             },
             "gpu_config": {
                 "name": self.gpu_config.name,
@@ -118,14 +114,14 @@ class LLMAnalyzerVisual(object):
 
         # -------------------------- 2. FLOPs ---------------------------
         prefill_flops_per_layer, prefill_dict_flops_per_layer = (
-            self.llm_flops.count_flops_per_layer(bs, seq_len)
+            self.llm_flops.count_flops_per_layer(bs, seq_len, generate_len)
         )
         decode_flops_per_layer, decode_dict_flops_per_layer = (
-            self.llm_flops.count_flops_per_layer(bs, 1)
+            self.llm_flops.count_flops_per_layer(bs, 1, generate_len)
         )
 
-        prefill_num_flops_model = self.llm_flops.count_flops_model(bs, seq_len)
-        decode_num_flops_model = self.llm_flops.count_flops_model(bs, 1)
+        prefill_num_flops_model = self.llm_flops.count_flops_model(bs, seq_len, generate_len)
+        decode_num_flops_model = self.llm_flops.count_flops_model(bs, 1, generate_len)
 
         # -------------------------- 3. Memory --------------------------
         memory_prefill_summary_dict, memory_decode_summary_dict = (
@@ -133,9 +129,7 @@ class LLMAnalyzerVisual(object):
                 bs,
                 seq_len,
                 generate_len,
-                is_inference=True,
                 flash_attn=False,
-                act_recomputation=ActivationRecomputation.NONE,
                 qkvo_proj_dtype_bytes=qkvo_proj_dtype_bytes,
                 mlp_act_dtype_bytes=mlp_act_dtype_bytes,
                 kv_cache_bytes=kv_cache_bytes,
@@ -154,11 +148,8 @@ class LLMAnalyzerVisual(object):
                 bs,
                 seq_len,
                 generate_len,
-                is_inference=is_inference,
-                use_kv_cache=use_kv_cache,
                 kv_cache_bytes=kv_cache_bytes,
                 rmsnorm_dtype_bytes=act_dtype_bytes,
-                act_recomputation=act_recomputation,
             )
         )
 
@@ -354,3 +345,124 @@ class LLMAnalyzerVisual(object):
                     self.print_format_summary_dict(value, get_dict_depth(value) - 1)
         if depth >= 1:
             pprint.pprint(summary_dict, indent=4, sort_dicts=False)
+
+def llm_profile(
+    model_name,
+    gpu_name: str = "a100-sxm-40gb",
+    bytes_per_param: int = BYTES_FP16,
+    bs: int = 20,
+    seq_len: int = 1024,
+    generate_len=1024,
+    dp_size: int = 1,
+    tp_size: int = 8,
+    pp_size: int = 1,
+    sp_size: int = 1,
+    act_dtype_bytes: int = BYTES_FP16,
+    kv_cache_bytes: int = BYTES_FP16,
+    flops_efficiency: float = FLOPS_EFFICIENCY,
+    hbm_memory_efficiency: float = HBM_MEMORY_EFFICIENCY,
+    intra_node_memory_efficiency=INTRA_NODE_MEMORY_EFFICIENCY,
+    inter_node_memory_efficiency=INTER_NODE_MEMORY_EFFICIENCY,
+    print_flag: bool = False,
+    visual_flag: bool = False,
+) -> dict:
+    """Returns dict of the total floating-point operations, MACs, parameters and latency of a llm.
+    It now returns a dictionary containing FLOPs, latency, HBM memory usage and max_batch_total_tokens.
+
+    Args:
+        model_name (str, optional): model name to query the pre-defined `model_configs.json`. Defaults to "llama-13b".
+        gpu_name (str, optional): gpu name to query the pre-defined `model_configs.json`. Defaults to "v100-sxm2-32gb".
+        bs (int, optional): _description_. Defaults to 1.
+        seq_len (int, optional): batch size per GPU.. Defaults to 522.
+        generate_len (int, optional): The maximum numbers of tokens to generate, 
+            ignoring the number of tokens in the prompt. Defaults to 1526.
+        dp_size (int, optional): data parallelism size. Defaults to 1.
+        tp_size (int, optional): tensor parallelism size. Defaults to 1.
+        pp_size (int, optional): pipeline parallelism size. Defaults to 1.
+        sp_size (int, optional): sequence parallelism size. Defaults to 1.
+            past last key/values attentions (if applicable to the model) to speed up decoding. Defaults to True.
+        layernorm_dtype_bytes (int, optional): number of bytes in the data type for the layernorm activations..
+            Defaults to BYTES_FP16.
+        kv_cache_bytes (int, optional): number of bytes in the data type for the kv_cache. Defaults to None.
+        flops_efficiency (float, optional): flops efficiency, ranging from 0 to 1. Defaults to None.
+        hbm_memory_efficiency (float, optional): GPU HBM memory efficiency, ranging from 0 to 1. 
+            Defaults to HBM_MEMORY_EFFICIENCY.
+        intra_node_memory_efficiency (_type_, optional): intra-node memory efficiency, ranging from 0 to 1.. 
+            Defaults to INTRA_NODE_MEMORY_EFFICIENCY.
+        inter_node_memory_efficiency (_type_, optional): inter-node memory efficiency, ranging from 0 to 1.. 
+            Defaults to INTER_NODE_MEMORY_EFFICIENCY.
+
+    Returns:
+        dict: a summary dictionary of the inference analysis
+    """
+    model_config, gpu_config = get_model_and_gpu_config_by_name(model_name, gpu_name)
+
+    parallelism_config = ParallelismConfig(
+        tp_size=tp_size, pp_size=pp_size, dp_size=dp_size, sp_size=sp_size
+    )
+
+    inference_config = InferenceConfig(
+        bs=bs,
+        seq_len=seq_len,
+        generate_len=generate_len,
+        bytes_per_param=bytes_per_param,
+        act_dtype_bytes=act_dtype_bytes,
+        kv_cache_bytes=kv_cache_bytes,
+    )
+
+    gpu_efficiency_config = GPUEfficiencyConfig(
+        flops_efficiency=flops_efficiency,
+        hbm_memory_efficiency=hbm_memory_efficiency,
+        intra_node_memory_efficiency=intra_node_memory_efficiency,
+        inter_node_memory_efficiency=inter_node_memory_efficiency,
+    )
+
+    llm_configs = LLMConfigs(
+        model_config=model_config,
+        gpu_config=gpu_config,
+        parallelism_config=parallelism_config,
+        inference_config=inference_config,
+        gpu_efficiency_config=gpu_efficiency_config,
+    )
+
+    profiler = LLMAnalyzerVisual(llm_configs)
+
+    infer_result_dict = profiler.infer_profile(
+        bs=bs,
+        seq_len=seq_len,
+        generate_len=generate_len,
+        act_dtype_bytes=act_dtype_bytes,
+        flops_efficiency=flops_efficiency,
+        hbm_memory_efficiency=hbm_memory_efficiency,
+        print_flag=print_flag,
+    )
+
+    # ---------------------------------------------------------------------
+    # Collect summary metrics (keep raw numbers for downstream maths)      #
+    # ---------------------------------------------------------------------
+    weight_memory_per_gpu = infer_result_dict.get("weight_memory_per_gpu", None)
+    consume_memory_per_gpu = infer_result_dict.get("consume_memory_per_gpu", None)
+
+    prefill_flops = infer_result_dict.get("prefill_flops", None)
+    
+    table_results = {
+        "seq_len": seq_len,
+        "generate_len": generate_len,
+        "prefill_flops": num_to_string(prefill_flops),           
+        "weight_memory_per_gpu": num_to_string(weight_memory_per_gpu),
+        "consume_memory_per_gpu": num_to_string(consume_memory_per_gpu),       
+        "TTFT": infer_result_dict.get("prefill_first_token_latency", None),
+        "TTOT": infer_result_dict.get("decode_per_token_latency", None),
+        "Total_latency": infer_result_dict.get("total_infer_latency", None),
+    }
+    visual_results = {
+        "seq_len": seq_len,
+        "generate_len": generate_len,
+        "prefill_flops": prefill_flops,                   # raw number
+        "weight_memory_per_gpu": weight_memory_per_gpu,
+        "consume_memory_per_gpu": consume_memory_per_gpu, # raw bytes
+        "TTFT": infer_result_dict.get("prefill_first_token_latency", None),
+        "TTOT": infer_result_dict.get("decode_per_token_latency", None),
+        "Total_latency": infer_result_dict.get("total_infer_latency", None),
+    }
+    return table_results, visual_results

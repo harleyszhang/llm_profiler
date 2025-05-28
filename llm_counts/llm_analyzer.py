@@ -133,74 +133,95 @@ class LLMAnalyzer(object):
         """
         hidden_size = num_heads * head_dim
         if not flash_attn:
+            ##########################prefill stage##########################
             # 1, qkt kernel analysis
             name = "qk_matmul"
+            load_q_mem = bs * self.num_heads * seq_len * self.head_dim
+            load_k_mem = bs * self.num_kv_heads * seq_len * self.head_dim
+            qk_store_mem = bs * self.num_heads * seq_len * seq_len
             self._analyze_to_results(
                 "prefill",
                 name,
                 flops=2 * seq_len * seq_len * self.head_dim * bs * self.num_heads,
                 load_weight=0,
-                load_act= 2 * bs * seq_len * hidden_size* act_byte, # load q and k act, shape is [s, h]
-                store_act=seq_len * seq_len * bs * num_heads * act_byte,
+                load_act=(load_q_mem + load_k_mem) * act_byte, # load q and k act, shape is [s, h]
+                store_act=qk_store_mem * act_byte,
                 load_kv_cache=0,
                 store_kv_cache=0,
             )
-            # load q and k, k is form kv cache
-            self._analyze_to_results(
-                "decode",
-                name,
-                flops=2 * bs * num_heads * head_dim * (seq_len + generate_len),
-                load_weight=0,
-                load_act=bs * seq_len * hidden_size * act_byte,
-                store_act=bs * (seq_len + generate_len) * num_kv_heads * head_dim * act_byte,
-                load_kv_cache=bs * (seq_len + generate_len) * num_kv_heads * head_dim * kv_byte,
-                store_kv_cache=0,
-            )
-            # 2, sv kernel analysis
-            name = "sv_matmul"
-            self._analyze_to_results(
-                "prefill",
-                name,
-                flops=bs * 2 * seq_len * seq_len * head_dim * num_heads,
-                load_weight=0,
-                load_act=2 * bs * seq_len * seq_len * act_byte, # load score(qkt) act, shape is [s, s]
-                store_act=bs * seq_len * hidden_size * act_byte,
-                load_kv_cache=0,
-                store_kv_cache=0,
-            )
-
-            self._analyze_to_results(
-                "decode",
-                name,
-                flops=2 * bs * num_heads * head_dim * (seq_len + generate_len),
-                load_weight=0,
-                load_act=bs * (seq_len + generate_len) * act_byte, # load score(qkt) act, shape is [1, s+o]
-                store_act=bs * seq_len * num_heads * head_dim * act_byte,
-                load_kv_cache=bs * (seq_len + generate_len) * num_kv_heads * head_dim * kv_byte,
-                store_kv_cache=0,
-            )
-
-            # 3, softmax kernel analysis
+            # 2, softmax kernel analysis
             name = f"softmax"
+            load_softmax_mem = qk_store_mem
+            softmax_store_mem = bs * self.num_heads * seq_len * seq_len
             self._analyze_to_results(
                 "prefill",
                 name,
                 flops= (bs * num_heads * seq_len * seq_len * 1 * 5),
                 load_weight=0,
-                load_act=bs * self.num_heads * seq_len * seq_len * kv_byte,
-                store_act=bs * self.num_heads * seq_len * seq_len * kv_byte,
+                load_act=load_softmax_mem * act_byte,
+                store_act=softmax_store_mem * act_byte,
                 load_kv_cache=0,
                 store_kv_cache=0,
             )
-
+            # 3, sv kernel analysis
+            name = "sv_matmul"
+            load_s_mem = softmax_store_mem
+            load_v_mem = bs * self.num_kv_heads * seq_len * self.head_dim
+            sv_store_mem = bs * self.num_heads * seq_len * self.head_dim
+            self._analyze_to_results(
+                "prefill",
+                name,
+                flops=bs * 2 * seq_len * seq_len * head_dim * num_heads,
+                load_weight=0,
+                load_act=load_s_mem * act_byte, # load score(qkt) act, shape is [s, s]
+                store_act=sv_store_mem * act_byte,
+                load_kv_cache=load_v_mem,
+                store_kv_cache=0,
+            )
+            ##########################decode stage##########################
+            name = "qk_matmul"
+            # load q and k, k is form kv cache
+            qk_matmul_flops = 2 * self.num_heads * self.head_dim * (seq_len + generate_len)
+            load_q_mem = bs * self.num_heads * 1  * self.head_dim
+            load_k_mem = bs * self.num_kv_heads * (seq_len + generate_len) * self.head_dim
+            qk_store_mem = bs * self.num_heads * (seq_len + generate_len) * (seq_len + generate_len)
             self._analyze_to_results(
                 "decode",
                 name,
-                flops= (bs * num_heads * (seq_len + generate_len) * 1 * 5) ,
+                flops=qk_matmul_flops,
                 load_weight=0,
-                load_act=bs * self.num_heads * (seq_len + generate_len)  * 1 * kv_byte,
-                store_act=bs * self.num_heads * (seq_len + generate_len)  * 1 * kv_byte,
+                load_act=load_q_mem * act_byte,
+                store_act=qk_store_mem * act_byte,
+                load_kv_cache=load_k_mem * kv_byte,
+                store_kv_cache=0,
+            )
+            # 2, softmax kernel analysis
+            name = f"softmax"
+            load_softmax_mem = qk_store_mem
+            softmax_store_mem = bs * self.num_heads * (seq_len + generate_len) * (seq_len + generate_len)
+            self._analyze_to_results(
+                "decode",
+                name,
+                flops= (bs * num_heads * seq_len * seq_len * 1 * 5),
+                load_weight=0,
+                load_act=load_softmax_mem * act_byte,
+                store_act=softmax_store_mem * act_byte,
                 load_kv_cache=0,
+                store_kv_cache=0,
+            )
+            # 3, sv kernel analysis
+            name = "sv_matmul"
+            load_s_mem = softmax_store_mem
+            load_v_mem = bs * self.num_kv_heads * (seq_len + generate_len) * self.head_dim
+            sv_store_mem = bs * self.num_heads * (seq_len + generate_len) * self.head_dim
+            self._analyze_to_results(
+                "decode",
+                name,
+                flops=qk_matmul_flops,
+                load_weight=0,
+                load_act=load_s_mem * act_byte, # load score(qkt) act, shape is [s, s]
+                store_act=sv_store_mem * act_byte,
+                load_kv_cache=load_v_mem,
                 store_kv_cache=0,
             )
         else:

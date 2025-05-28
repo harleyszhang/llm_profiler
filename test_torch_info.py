@@ -4,7 +4,7 @@ import torch
 from transformers import AutoModel, AutoConfig, PreTrainedModel
 from accelerate import init_empty_weights
 
-MODEL_ID = "/home/honggao/llm_weights/Qwen3-235B-A22B"
+MODEL_ID = "/home/honggao/llm_weights/Qwen3-8B"
 
 
 def print_empty_model(model_id):
