@@ -180,7 +180,7 @@ class LLMAnalyzerVisual(object):
             # -------------------------- 绘图：模型 graph 图示例 --------------------------
             base_path = f"_{self.model_config.model_name}_tp{self.tp_size}_bs{self.b}_seqlen{self.s}_genlen{self.o}.png"
             llm_analyzer.create_layer_graph(model_type, results, base_path)
-            Formatter.print_format_summary_dict(results, get_dict_depth(results))
+            # Formatter.print_format_summary_dict(results, get_dict_depth(results))
 
             # -------------------------- 绘图：Pie 图示例 --------------------------
             prefill_latency_pie_save_path = f"./figures/latency_prefill" + base_path
@@ -224,6 +224,7 @@ class LLMAnalyzerVisual(object):
         *,
         explode_small_pct: float = 4.0,   # explode slices whose pct < this value
         label_pct_threshold: float = 0.5, # display "<x%" for very small slices
+        label_display_threshold: float = 2.0,  # hide outer label below this pct
     ):
         """
         Pie chart styled similar to the user's sample:
@@ -239,6 +240,11 @@ class LLMAnalyzerVisual(object):
         labels = list(data.keys())
         sizes = list(data.values())
         total = float(sum(sizes)) or 1.0
+
+        pct_list = [100 * s / total for s in sizes]
+        labels_display = [
+            lbl if pct >= label_display_threshold else "" for lbl, pct in zip(labels, pct_list)
+        ]
 
         # colour palette
         cmap = plt.get_cmap("tab20" if len(labels) > 9 else "tab10")
@@ -263,8 +269,8 @@ class LLMAnalyzerVisual(object):
 
         wedges, texts, autotexts = ax.pie(
             sizes,
-            labels=labels,         # always show all labels
-            labeldistance=1.18,    # push farther to reduce collision
+            labels=labels_display,
+            labeldistance=1.18,
             autopct=_autopct,
             pctdistance=0.78,
             startangle=140,
@@ -281,7 +287,7 @@ class LLMAnalyzerVisual(object):
             wedges,
             labels,
             loc="upper center",
-            bbox_to_anchor=(0.5, -0.11),
+            bbox_to_anchor=(0.5, -0.14),
             ncol=min(len(labels), 5),
             fontsize=9,
             frameon=False,
@@ -299,7 +305,7 @@ class LLMAnalyzerVisual(object):
         )
 
         # tidy layout – adjust bottom for legend
-        fig.subplots_adjust(left=0.05, right=0.95, top=0.88, bottom=0.22)
+        fig.subplots_adjust(left=0.05, right=0.95, top=0.88, bottom=0.25)
         fig.savefig(save_path, bbox_inches="tight", pad_inches=0.06, dpi=300)
         plt.close(fig)
 

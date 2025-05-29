@@ -183,7 +183,9 @@ def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", batch_size=16, generate_
         pandas.DataFrame: one row per sequence length with metrics
     """
     if seq_len_list is None:
-        seq_len_list = [128, 256, 512, 1024, 1334, 1567, 1678,]
+        seq_len_list = [128, 256, 512, 1024, 1334, 1567, 1678, 2567, 3072, 
+                        4096, 5120, 6144, 8192, 10240, 12288, 16384,
+                        21472, 24576, 30346, 32768, 33792, 34980, 36790]
 
     records1 = []
     records2 = []
@@ -199,7 +201,7 @@ def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", batch_size=16, generate_
             visual_flag=False,
         )
         print("=" * 80)
-        print(f"model_name: {model_name}, gpu_name: {gpu_name}, tp_size: {tp_size}, batch_size: {bs}, seq_len: {seq}, generate_len: {generate_len}")
+        print(f"model_name: {model_name}, gpu_name: {gpu_name}, tp_size: {tp_size}, batch_size: {batch_size}, seq_len: {seq}, generate_len: {generate_len}")
 
         records1.append(res1)
         records2.append(res2)
@@ -219,5 +221,5 @@ def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", batch_size=16, generate_
 
 if __name__ == "__main__":
     # Example: sweep different sequence lengths and visualise
-    sweep_seq_len(model_name="llama2-70b", gpu_name="a100-sxm-80gb", 
-                  generate_len=128, batch_size=16, tp_size=4, visual_flag=True)
+    sweep_seq_len(model_name="Qwen3-32B", gpu_name="a100-sxm-80gb", 
+                  generate_len=1024, batch_size=16, tp_size=4, visual_flag=True)
