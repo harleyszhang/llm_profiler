@@ -15,30 +15,41 @@ class Formatter(object):
 
     @classmethod
     def print_format_summary_dict(
-        cls, summary_dict: dict, depth: int, category="params"
+        self,
+        summary_dict: dict,
+        depth: int,
+        category: str | None = None,
     ) -> str:
-        """打印时对 params / flops / latency / memory 等进行统一转换显示。"""
-
-        def recursive_format(dictionary, current_depth):
-            if current_depth <= 0:  # 深度限制
-                return dictionary
-
-            formatted_dict = {}
-            for key, value in dictionary.items():
-                if isinstance(value, dict):  # 如果是子字典，递归格式化
-                    formatted_dict[key] = recursive_format(value, current_depth - 1)
-                elif "max_bs" in key or "max_batch_total" in key:  # 格式化具体值
-                    formatted_dict[key] = value
+        """
+        打印时对 params / flops / latency / memory 等进行统一转换显示。
+        If *category* is provided, apply that formatting to every leaf value that is
+        not a nested dict; otherwise fall back to key‑based inference.
+        """
+        if category is not None and not isinstance(summary_dict, dict):
+            # Safety bail‑out (shouldn't happen)
+            return summary_dict
+        for key, value in summary_dict.items():
+            # If category is explicitly provided, ignore key‑name heuristics
+            explicit_cat = category
+            if (explicit_cat == "params" or explicit_cat == "flops") or ("params" in key or "flops" in key):
+                if not isinstance(value, dict):
+                    summary_dict.update({key: num_to_string(value)})
                 else:
-                    formatted_dict[key] = cls.format_value(value, category)
-            return formatted_dict
-
-        # 开始递归格式化
-        formatted_summary = recursive_format(summary_dict, depth)
-
-        # 打印格式化后的字典
-        pprint.pprint(formatted_summary, indent=4, sort_dicts=False)
-        return formatted_summary  # 返回格式化后的字典
+                    self.print_format_summary_dict(
+                        value, get_dict_depth(value) - 1, category
+                    )  # 递归
+            if explicit_cat == "latency" or "latency" in key:
+                if not isinstance(value, dict):
+                    summary_dict.update({key: latency_to_string(value)})
+                else:
+                    self.print_format_summary_dict(value, get_dict_depth(value) - 1, category)
+            if explicit_cat == "memory" or "memory" in key:
+                if not isinstance(value, dict):
+                    summary_dict.update({key: f"{num_to_string(value)}B"})
+                else:
+                    self.print_format_summary_dict(value, get_dict_depth(value) - 1, category)
+        if depth >= 1:
+            pprint.pprint(summary_dict, indent=4, sort_dicts=False)
 
 
 def print_list(list):

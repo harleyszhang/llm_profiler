@@ -9,7 +9,7 @@ FLOPS_EFFICIENCY = (
     0.9  # FLOPS efficiency achieved by Megatron-LM is ~0.5 for LLM training
 )
 HBM_MEMORY_EFFICIENCY = 0.9  # GPU HBM memory efficiency
-INTRA_NODE_MEMORY_EFFICIENCY = 0.9  # intra-node (nvlink) memory efficiency
+INTRA_NODE_MEMORY_EFFICIENCY = 0.75  # intra-node (nvlink) memory efficiency
 INTER_NODE_MEMORY_EFFICIENCY = 0.9  # inter-node memory efficiency
 
 NUM_GPUS_PER_NODE = 8  # number of GPUs per node

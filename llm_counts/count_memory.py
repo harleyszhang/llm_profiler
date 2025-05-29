@@ -1,10 +1,7 @@
 from .utils.config import LLMConfigs
-from .utils.constants import BYTES_FP16, ActivationRecomputation
-
-
+from .utils.constants import BYTES_FP16
 from .count_params import CountCausalLMParams
 
-# --- Helper for byte-count products --- #
 from functools import reduce
 import operator as _op
 
@@ -22,16 +19,11 @@ class CountCausalLMMemory(object):
         self.hidden_size = self.model_config.hidden_size
         self.intermediate_size = self.model_config.intermediate_size
 
-        self.num_layers = self.model_config.num_layers
-        self.V = self.model_config.vocab_size
         self.num_heads = self.model_config.num_heads
         self.num_kv_heads = self.model_config.num_kv_heads
-        # use integer division to avoid float head dimensions
-        self.head_dim = self.hidden_size // self.num_heads
-
-        self.b = llm_configs.inference_config.bs
-        self.s = llm_configs.inference_config.seq_len
-        self.o = llm_configs.inference_config.generate_len
+        self.head_dim = self.model_config.head_dim
+        self.num_layers = self.model_config.num_layers
+        self.V = self.model_config.vocab_size
 
         self.bytes_per_param = llm_configs.inference_config.bytes_per_param
         self.act_dtype_bytes = BYTES_FP16
@@ -43,6 +35,13 @@ class CountCausalLMMemory(object):
         self.gpu_memory_in_GB = llm_configs.gpu_config.memory_GPU_in_GB * 10**9
         self.llm_params = CountCausalLMParams(self.model_config)
 
+    def count_memory_weight_per_gpu(self, ):
+        """Get the memory of the model weights"""
+        params_model = self.llm_params.count_params_model()
+        memory_weight_per_gpu = params_model * self.bytes_per_param / self.tp_size
+
+        return memory_weight_per_gpu
+    
     def count_mac_per_layer_attn_kernel(
         self,
         bs: int,
@@ -51,12 +50,10 @@ class CountCausalLMMemory(object):
         flash_attn: bool = False,
         kv_cache_bytes: int = BYTES_FP16,
     ):
-        "self-attention kernle 可应用张量并行操作"
         if self.model_type == "qwen3":
-        # --- LayerNorm on Q & K (×2) ------------------------------------ #
             norm_bytes = 2 * (
-                _B(self.head_dim, BYTES_FP16)                                  # load γ & β
-                + 2 * _B(bs, seq_len, self.head_dim, BYTES_FP16)               # load + store acts
+                _B(self.head_dim, BYTES_FP16)                    # load γ
+                + 2 * _B(bs, seq_len, self.head_dim, BYTES_FP16) # load + store acts
             )
         else:
             norm_bytes = 0
@@ -82,7 +79,10 @@ class CountCausalLMMemory(object):
                 self_atten_mac = (load_q_mem + load_k_mem + qk_store_mem
                                   + load_softmax_mem + softmax_store_mem
                                   + load_s_mem + load_v_mem + sv_store_mem)
-                return self_atten_mac * kv_cache_bytes + norm_bytes
+                max_act = max(load_q_mem, load_k_mem, qk_store_mem,
+                              load_softmax_mem, softmax_store_mem,
+                              load_s_mem, load_v_mem, sv_store_mem) * self.act_dtype_bytes
+                return max_act, self_atten_mac * kv_cache_bytes + norm_bytes
 
             else:
                 # dim changge: (bs, 1, hidden_size) -> (bs, 1, num_heads, head_dim)
@@ -101,11 +101,14 @@ class CountCausalLMMemory(object):
                 load_v_mem = bs * self.num_kv_heads * (seq_len + generate_len) * self.head_dim
                 sv_store_mem = bs * self.num_heads * (seq_len + generate_len) * self.head_dim
 
+                max_act = max(load_q_mem, load_k_mem, qk_store_mem,
+                              load_softmax_mem, softmax_store_mem,
+                              load_s_mem, load_v_mem, sv_store_mem) * self.act_dtype_bytes
                 self_atten_mac = (load_q_mem + load_k_mem + qk_store_mem
                                   + load_softmax_mem + softmax_store_mem
                                   + load_s_mem + load_v_mem + sv_store_mem)
                 
-                return self_atten_mac * kv_cache_bytes + norm_bytes
+                return max_act, self_atten_mac * kv_cache_bytes + norm_bytes
         
     def count_mac_per_layer_kv_cache(
         self,
@@ -164,33 +167,65 @@ class CountCausalLMMemory(object):
         self,
         bs: int,
         seq_len: int,
-        qkvo_proj_dtype_bytes=BYTES_FP16,
-    ) -> float:
-        """Count the memory (in bytes) required  to store the acts of the
-        attention in a transformer layer, given the batch size, sequence length,
-        whether it is inference or training, the act recomputation strategy,
-        and the act data type.
-
-        The `attn` acts include the input to Q/K/V gemm, QK^T matrix multiply,
-        softmax, softmax dropout attention over V, the input to the attention output Gemm.
+        qkvo_weight_dtype_bytes=BYTES_FP16,
+    ) -> int:
         """
-        # 4 projections, each load + store  (4 * 2 = 8)
-        return 8 * _B(bs, seq_len, self.hidden_size, qkvo_proj_dtype_bytes)
+        Count memory access cost for Q/K/V/O projection layers.
+        """
+        atten_linear_layers = {
+            "q_proj": [self.hidden_size, self.num_heads * self.head_dim],
+            "k_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+            "v_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+            "out_proj": [self.num_heads * self.head_dim, self.hidden_size],
+        }
+
+        atten_linear_layers_mac = 0
+        max_act = 0
+        for name, (in_ch, out_ch) in atten_linear_layers.items():
+            is_kv_proj = name in ["k_proj", "v_proj"]
+            is_normal_proj = not is_kv_proj
+
+            load_weight = in_ch * out_ch
+            load_act = in_ch * bs * seq_len
+            store_act = 0 if is_kv_proj else bs * seq_len * out_ch
+            load_kv_cache = 0
+            store_kv_cache = 0 if is_normal_proj else out_ch * bs * seq_len
+
+            max_act = max(max_act, load_weight, load_act, store_act, store_kv_cache) 
+
+            mac = load_weight + load_act + store_act + load_kv_cache + store_kv_cache
+            atten_linear_layers_mac += mac
+        
+        return max_act * self.act_dtype_bytes, atten_linear_layers_mac * qkvo_weight_dtype_bytes
 
     def count_mac_per_layer_mlp(
         self,
         bs: int,
         seq_len: int,
-        mlp_act_dtype_bytes=BYTES_FP16,
+        mlp_weight_dtype_bytes=BYTES_FP16,
     ) -> float:
         """The `mlp` acts include the input to the two linear layers.
         Refer to https://arxiv.org/abs/2205.05198 for details.
         The two linear layers store their inputs with size 2bsh and 8bsh
         """
-        load_hidden = _B(bs, seq_len, self.hidden_size, mlp_act_dtype_bytes)
-        load_inter  = _B(bs, seq_len, self.intermediate_size, mlp_act_dtype_bytes)
-        # Peak bytes across gate‑proj, GELU and down‑proj
-        return max(2 * load_hidden, 2 * load_inter, load_hidden + load_inter)
+        mlp_linear_layers = {
+            "gate_proj": [self.hidden_size, self.intermediate_size],
+            "up_proj": [self.hidden_size, self.intermediate_size],
+            "down_proj": [self.intermediate_size, self.hidden_size],
+        }
+
+        mlp_linear_layers_mac = 0
+        max_act = 0
+        for _, (in_ch, out_ch) in mlp_linear_layers.items():
+            load_weight = in_ch * out_ch
+            load_act = in_ch * bs * seq_len
+            store_act = bs * seq_len * out_ch
+
+            max_act = max(max_act, load_weight, load_act, store_act) 
+            mac = load_weight + load_act + store_act
+            mlp_linear_layers_mac += mac
+        
+        return max_act * self.act_dtype_bytes, mlp_linear_layers_mac * mlp_weight_dtype_bytes
 
     def count_mac_per_layer_norm(
         self,
@@ -202,11 +237,11 @@ class CountCausalLMMemory(object):
         rmsnorm_load_act = bs * seq_len * self.hidden_size * self.act_dtype_bytes
         rmsnorm_store_act = bs * seq_len * self.hidden_size * self.act_dtype_bytes
 
-        rn_mac_per_gpu = (
+        norm_mac_per_gpu = (
             rmsnorm_load_weight + rmsnorm_load_act + rmsnorm_store_act
         )
-
-        return rn_mac_per_gpu
+        max_act = max(rmsnorm_load_weight, rmsnorm_load_act, rmsnorm_store_act) * self.act_dtype_bytes
+        return max_act, norm_mac_per_gpu
 
     def count_mac_input_embedding(self, bs: int, seq_len: int) -> float:
         input_embedding_load_act = bs * seq_len * self.act_dtype_bytes
@@ -218,13 +253,6 @@ class CountCausalLMMemory(object):
         )
 
         return input_embedding_mac_per_gpu
-
-    def count_memory_weight_per_gpu(self, ):
-        """Get the memory of the model weights"""
-        params_model = self.llm_params.count_params_model()
-        memory_weight_per_gpu = params_model * self.bytes_per_param / self.tp_size
-
-        return memory_weight_per_gpu
 
     def count_memory_kv_cache_per_layer(
         self,
@@ -260,7 +288,7 @@ class CountCausalLMMemory(object):
 
         return memory_kv_cache_per_layer
 
-    def count_mac_per_layer(
+    def count_max_act_per_layer(
         self,
         bs: int,
         seq_len_ctx: int,
@@ -268,32 +296,36 @@ class CountCausalLMMemory(object):
         *,
         stage: str = "prefill",        # "prefill" | "decode"
         flash_attn: bool = False,
-        qkvo_proj_dtype_bytes: int = BYTES_FP16,
-        mlp_act_dtype_bytes: int = BYTES_FP16,
+        qkvo_weight_dtype_bytes: int = BYTES_FP16,
+        mlp_weight_dtype_bytes: int = BYTES_FP16,
     ) -> float:
-        # --- sanity ---------------------------------------------------- #
         assert stage in {"prefill", "decode"}
 
         # For decode stage each step handles just **one token**.
         tokens = 1 if stage == "decode" else seq_len_ctx
 
-        act_mem_per_layer_qkvo_proj = self.count_mac_per_layer_qkvo_proj(
+        act_per_layer_self_atten, _ = self.count_mac_per_layer_attn_kernel(
+            bs,
+            tokens,
+            generate_len=generate_len,
+            flash_attn=flash_attn,
+            kv_cache_bytes=qkvo_weight_dtype_bytes,
+        )
+        act_per_layer_qkvo_proj, _ = self.count_mac_per_layer_qkvo_proj(
+            bs,
+            tokens,
+            qkvo_weight_dtype_bytes=qkvo_weight_dtype_bytes,
+        )
+        act_per_layer_mlp, _ = self.count_mac_per_layer_mlp(
                 bs,
                 tokens,
-                qkvo_proj_dtype_bytes=qkvo_proj_dtype_bytes,
+                mlp_weight_dtype_bytes=mlp_weight_dtype_bytes,
             )
+        act_per_layer_rn, _ = self.count_mac_per_layer_norm(bs, tokens) 
 
-        act_mem_per_layer_mlp = self.count_mac_per_layer_mlp(
-                bs,
-                tokens,
-                mlp_act_dtype_bytes=mlp_act_dtype_bytes,
-            )
+        act_per_layer = max(act_per_layer_self_atten, act_per_layer_qkvo_proj, act_per_layer_mlp, act_per_layer_rn)
 
-        act_mem_per_layer_rn = self.count_mac_per_layer_norm(bs, tokens) 
-
-        act_memory_per_layer = max(act_mem_per_layer_qkvo_proj, act_mem_per_layer_mlp, act_mem_per_layer_rn)
-
-        return act_memory_per_layer
+        return act_per_layer
     
     def count_memory_per_gpu(
         self,
@@ -301,8 +333,8 @@ class CountCausalLMMemory(object):
         seq_len: int,
         generate_len: int,
         flash_attn: bool = True,
-        qkvo_proj_dtype_bytes: int = BYTES_FP16,
-        mlp_act_dtype_bytes=BYTES_FP16,
+        qkvo_weight_dtype_bytes: int = BYTES_FP16,
+        mlp_weight_dtype_bytes=BYTES_FP16,
         kv_cache_bytes: int = BYTES_FP16,
     ) -> tuple:
         # 1, prefill stage count memory and max_bs
@@ -310,62 +342,62 @@ class CountCausalLMMemory(object):
         memory_left_per_gpu = self.gpu_memory_in_GB - weight_memory_per_gpu
 
         # --- 1) PREFILL stage ----------------------------------------- #
-        prefill_act_memory_bs_1 = self.count_mac_per_layer(
+        prefill_act_bs_1 = self.count_max_act_per_layer(
             1,
             seq_len,
             generate_len=generate_len,
             stage="prefill",
             flash_attn=flash_attn,
-            qkvo_proj_dtype_bytes=qkvo_proj_dtype_bytes,
-            mlp_act_dtype_bytes=mlp_act_dtype_bytes,
-        )
-        prefill_max_bs = int(memory_left_per_gpu / prefill_act_memory_bs_1)
-        prefill_act_memory_per_gpu = bs * prefill_act_memory_bs_1
+            qkvo_weight_dtype_bytes=qkvo_weight_dtype_bytes,
+            mlp_weight_dtype_bytes=mlp_weight_dtype_bytes,
+        ) // self.tp_size
+
+        prefill_max_bs = int(memory_left_per_gpu / prefill_act_bs_1)
+        prefill_act_per_gpu = bs * prefill_act_bs_1
 
         # --- 2) DECODE stage ------------------------------------------ #
-        kv_cache_memory_bs_1 = (self.count_memory_kv_cache_per_layer(1, seq_len, generate_len, kv_cache_bytes) * self.num_layers_per_gpu) / self.tp_size
-        kv_cache_memory_per_gpu = bs * kv_cache_memory_bs_1
-        
-        decode_act_memory_bs_1 = self.count_mac_per_layer(
+        kv_cache_memory_bs_1_per_gpu = (self.count_memory_kv_cache_per_layer(1, seq_len, generate_len, kv_cache_bytes) * self.num_layers_per_gpu) / self.tp_size
+        decode_act_bs_1_per_gpu = self.count_max_act_per_layer(
             1,
             seq_len,
             generate_len=generate_len,
             stage="decode",
             flash_attn=flash_attn,
-            qkvo_proj_dtype_bytes=qkvo_proj_dtype_bytes,
-            mlp_act_dtype_bytes=mlp_act_dtype_bytes,
-        )
-        decode_act_memory_per_gpu = decode_act_memory_bs_1 * bs
+            qkvo_weight_dtype_bytes=qkvo_weight_dtype_bytes,
+            mlp_weight_dtype_bytes=mlp_weight_dtype_bytes,
+        ) // self.tp_size
+        decode_max_bs = memory_left_per_gpu // (decode_act_bs_1_per_gpu + kv_cache_memory_bs_1_per_gpu)
 
-        decode_max_bs = int(memory_left_per_gpu / (decode_act_memory_bs_1 + kv_cache_memory_bs_1))
+        kv_cache_memory_per_gpu = bs * kv_cache_memory_bs_1_per_gpu
+        decode_act_per_gpu = decode_act_bs_1_per_gpu * bs
         max_batch_total_tokens = decode_max_bs * (seq_len + generate_len)
 
         assert bs <= decode_max_bs, (
-            f"bs {bs} is too large to fit"
+            f"For context length: {seq_len + generate_len}, bs {bs} is too large to fit"
             " in GPU memory, decode_max_bs:"
             f" {decode_max_bs}"
         )
 
         assert memory_left_per_gpu > (
-            kv_cache_memory_per_gpu + decode_act_memory_per_gpu
+            kv_cache_memory_per_gpu + decode_act_per_gpu
         ), (
             "kv_cache and act memory with bs ="
             f" {bs} is too large to fit in GPU memory"
         )
         
         consume_memory_per_gpu = (
-            weight_memory_per_gpu + decode_act_memory_per_gpu + kv_cache_memory_per_gpu
+            weight_memory_per_gpu + decode_act_per_gpu + kv_cache_memory_per_gpu
         )
 
         # memory summary
         memory_prefill_summary_dict = {
             "weight_memory_per_gpu": weight_memory_per_gpu,
             "prefill_max_bs": prefill_max_bs,
-            "prefill_act_memory_per_gpu": prefill_act_memory_per_gpu,
+            "prefill_act_per_gpu": prefill_act_per_gpu,
         }
 
         memory_decode_summary_dict = {
-            "decode_act_memory_per_gpu": decode_act_memory_per_gpu,
+            "decode_act_per_gpu": decode_act_per_gpu,
             "kv_cache_memory_per_gpu": kv_cache_memory_per_gpu,
             "consume_memory_per_gpu": consume_memory_per_gpu,
             "decode_max_bs": decode_max_bs,

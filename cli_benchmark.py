@@ -171,7 +171,7 @@ def plot_seq_len_sweep(
     print("=" * 80)
 
 
-def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", bs=16, generate_len=1024, tp_size=2, seq_len_list=None, **kwargs):
+def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", batch_size=16, generate_len=1024, tp_size=2, seq_len_list=None, **kwargs):
     """Profile a model over several sequence lengths and print / plot a table.
 
     Args:
@@ -183,7 +183,7 @@ def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", bs=16, generate_len=1024
         pandas.DataFrame: one row per sequence length with metrics
     """
     if seq_len_list is None:
-        seq_len_list = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 35456, 37960]
+        seq_len_list = [128, 256, 512, 1024, 1334, 1567, 1678,]
 
     records1 = []
     records2 = []
@@ -191,7 +191,7 @@ def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", bs=16, generate_len=1024
         res1, res2 = llm_profile(
             model_name=model_name,
             gpu_name=gpu_name,
-            bs=bs,
+            batch_size=batch_size,
             seq_len=seq,
             generate_len=generate_len,
             tp_size=tp_size,
@@ -219,5 +219,5 @@ def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", bs=16, generate_len=1024
 
 if __name__ == "__main__":
     # Example: sweep different sequence lengths and visualise
-    sweep_seq_len(model_name="Qwen3-32B", gpu_name="a100-sxm-80gb", 
-                  generate_len=2048, bs=32, tp_size=4, visual_flag=True)
+    sweep_seq_len(model_name="llama2-70b", gpu_name="a100-sxm-80gb", 
+                  generate_len=128, batch_size=16, tp_size=4, visual_flag=True)

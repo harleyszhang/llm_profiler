@@ -75,5 +75,7 @@ def print_all_llm_analyzer():
     print_list(tgi_service_dict_list)
 
 if __name__ == "__main__":
-    llm_profile(model_name="llama-7b", tp_size=1, print_flag=True, visual_flag=True)
-    llm_profile(model_name="llama2-70b", tp_size=8, print_flag=True, visual_flag=False)
+    # llm_profile(model_name="llama-7b", tp_size=1, print_flag=True, visual_flag=True)
+    llm_profile(model_name="llama2-70b", gpu_name = "a100-sxm-40gb", tp_size=8, 
+                batch_size = 32, seq_len = 1024, generate_len=128,
+                print_flag=True, visual_flag=True)

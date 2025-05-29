@@ -1,19 +1,13 @@
 from .utils.config import ModelConfig
-from .utils.constants import TOLERANCE
-from .utils.utils import within_range
-from .count_params import CountCausalLMParams
 
 
 class CountCausalLMFlops(object):
-    """The count is model-specific and does not depend on the parallelism strategy.
-    And ignore layer normalization and other element-wise operations."""
+    """CountCausalLMFlops is a class that counts the number of floating point operations (FLOPs) 
+    for a causal language model (LLM) during the forward passes."""
 
     def __init__(
         self,
         model_config: ModelConfig,
-        bs: int,
-        seq_len: int,
-        tp_size: int,
     ) -> None:
         self.model_type = model_config.model_type
         self.num_heads = model_config.num_heads
@@ -24,26 +18,15 @@ class CountCausalLMFlops(object):
         self.l = model_config.num_layers
         self.V = model_config.vocab_size
 
-        self.b = bs
-        self.s = seq_len
-        self.tp_size = tp_size
-
     def count_flops_per_layer_qkvo_proj(self, bs: int, seq_len: int) -> int:
         """Get the number of floating point operations (flops) for the forward
-        pass of the attention module in a transformer layer, given the batch
-        size and sequence length.
+        pass of the attention linear layers, given the batch size and sequence length.
 
-        mainly including four linear calculations: query/key/value projection and output
-        matrices multiplication、self-attention internal operation, and element-wise operations are ignored.
+        flops_qkvo_proj = flops_q + flops_k + flops_v + flops_output
 
-        flops_qkvo_proj = flops_q + flops_k + flops_v + flops_output + flops_self_attention
-              = 4(bsh^2) + 2(2bs^2h)
         Args:
             bs (int): batch size
             seq_len (int): sequence length
-
-        Returns:
-            int: flops for the forward pass of the attention module in a transformer layer
         """
         q_proj_flops = 2 * bs * seq_len * self.hidden_size * self.num_heads * self.head_dim
         k_proj_flops = 2 * bs * seq_len * self.hidden_size * self.num_kv_heads * self.head_dim
@@ -53,6 +36,18 @@ class CountCausalLMFlops(object):
 
         return qkvo_proj_flops
 
+    def count_flops_per_layer_mlp(self, bs: int, seq_len: int) -> int:
+        """Count two flops of matrices multiplication(two linear layers in the MLP module.)
+        eg. llama3.2-1B: self.intermediate_size = 4 * self.hidden_size
+        eg. flops_mlp(llama3.2-1B) = flops_fc1 + flops_fc2 + flops_fc3 
+                                   = 2bs(4h^2) + 2bs(4h^2) + 2bs(4h^2) = 24bsh^2
+        """
+        flops_gate_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
+        flops_up_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
+        flops_down_proj = 2 * bs * seq_len * self.intermediate_size * self.hidden_size
+
+        return flops_gate_proj + flops_up_proj + flops_down_proj
+    
     def count_flops_per_layer_attn_kernel(self, bs: int, seq_len: int, generate_len: int) -> int:
         q_norm_flops = bs * 4 * seq_len * self.head_dim
         k_norm_flops = q_norm_flops
@@ -71,17 +66,6 @@ class CountCausalLMFlops(object):
 
         return flops_self_attention_kernel
 
-    def count_flops_per_layer_mlp(self, bs: int, seq_len: int) -> int:
-        """Count two flops of matrices multiplication(two linear layers in the MLP module.)
-        eg. llama3.2-1B: self.intermediate_size = 4 * self.hidden_size
-        eg. flops_mlp(llama3.2-1B) = flops_fc1 + flops_fc2 + flops_fc3 = 2bs(4h^2) + 2bs(4h^2) + 2bs(4h^2) = 24bsh^2
-        """
-        flops_gate_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
-        flops_up_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
-        flops_down_proj = 2 * bs * seq_len * self.intermediate_size * self.hidden_size
-
-        return flops_gate_proj + flops_up_proj + flops_down_proj
-
     def count_flops_per_layer_norm(self, bs: int, seq_len: int) -> int:
         """flops of 2 rmsnrom per layer"""
         return bs * 4 * seq_len * self.hidden_size
@@ -95,18 +79,18 @@ class CountCausalLMFlops(object):
         )
         flops_per_layer_rmsnorm = (
             self.count_flops_per_layer_norm(bs, seq_len) * 2
-        )  # atten_rmsnorm mlp_rmsnorm
+        )  # atten_rmsnorm and mlp_rmsnorm
 
-        flops_positional_embedding = self.count_flops_positional_embedding()
+        flops_positional_embedding = self.count_flops_positional_embedding(bs, seq_len)
 
         flops_per_layer = (
             flops_per_layer_qkvo_proj
             + flops_per_layer_mlp
             + flops_per_layer_rmsnorm
             + flops_per_layer_attention_kernel
+            + flops_positional_embedding
         )
 
-        # 默认计算 prefill 阶段的计算量
         dict_flops_per_layer = {
             "attention_kernel": flops_per_layer_attention_kernel,
             "qkvo_proj": flops_per_layer_qkvo_proj,
@@ -120,20 +104,22 @@ class CountCausalLMFlops(object):
 
     def count_flops_positional_embedding(
         self,
+        bs:int,
+        seq_len:int,
     ) -> int:
         """flops of output token logits layer"""
-        return 2 * self.b * self.s * self.hidden_size
+        return 2 * bs * seq_len * self.hidden_size
 
     def count_flops_model(self, bs: int, seq_len: int, generate_len: int) -> int:
-        """Count flops of the forward pass of the transformer model, given the batch size and sequence length."""
-        num_flops_model = (
-            self.count_flops_per_layer(bs, seq_len, generate_len)[0] * self.l
-            + self.count_flops_positional_embedding()
-        )
-
+        """Count flops of the forward pass of the transformer model, 
+        given the batch size and sequence length.
+        """
+        num_flops_model = self.count_flops_per_layer(bs, seq_len, generate_len)[0] * self.l
+    
         return num_flops_model
 
     def count_flops_bwd_model(self, bs: int, seq_len: int, generate_len:int) -> int:
         """Get the number of floating point operations (flops) for the backward
-        pass of the entire transformer model, given the batch size and sequence"""
+        pass of the entire transformer model, given the batch size and sequence
+        """
         return 2 * self.count_flops_model(bs, seq_len, generate_len)
