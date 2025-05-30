@@ -85,8 +85,8 @@ class InferenceConfig:
 
 @dataclass
 class ParallelismConfig:
-    """dataclass module provides a decorator and functions for automatically adding generated special methods
-    such as __init__() and __repr__() to user-defined classes
+    """dataclass module provides a decorator and functions for automatically adding 
+    generated special methods such as __init__() and __repr__() to user-defined classes.
     """
 
     tp_size: int = (
@@ -185,7 +185,8 @@ class GPUConfig:
     hbm_bandwidth_in_GB_per_sec: float=None  # GPU HBM bandwidth in GB/s
     intra_node_bandwidth_in_GB_per_sec: float=None # intra node GPU bandwidth in GB/s.(PCIE/NVLINK)
     intra_node_min_message_latency: float=None # minimum intra node message latency in seconds
-    inter_node_bandwidth_in_GB_per_sec: float = 200  # inter node bandwidth in GB/s, assuming Mellanox 200Gbps HDR Infiniband
+    # inter node bandwidth in GB/s, assuming Mellanox 200Gbps HDR Infiniband
+    inter_node_bandwidth_in_GB_per_sec: float = 200  
 
     # 3, 不同精度的 Tensor core 的计算性能
     peak_fp32_TFLOPS: float = None  # peak Tensor TFLOPS for FP32

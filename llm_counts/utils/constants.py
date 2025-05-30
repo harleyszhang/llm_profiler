@@ -38,14 +38,16 @@ class ActivationRecomputation(Enum):
     NONE = 0
     """No activation recomputation; requires the most amount of memory."""
     ATTN_COMPUTE = 1
-    """Selectively checkpoints the attention computation (QK^T matrix multiply, softmax, softmax dropout, and attention over
-    V.) in the attention module of a transformer layer;
-    this part takes up a considerable amount of memory but are not computationally expensive to
-    recompute"""
+    """Selectively checkpoints the attention computation (
+    QK^T matrix multiply, softmax, softmax dropout, and attention overV.) 
+    in the attention module of a transformer layer; this part takes up a 
+    considerable amount of memory but are not computationally expensive to recompute"""
     ATTN = 2
-    """Selectively checkpoints the input to the attention module in a transformer layer; requires an extra forward pass on attention."""
+    """Selectively checkpoints the input to the attention module in a transformer layer; 
+    requires an extra forward pass on attention."""
     NORM_ATTN_NORM = 3
-    """Selectively checkpoints the input to the sequence of modules (layernom-attention-layernom) in a transformer layer; requires an extra forward pass on (layernom-attention-layernom)."""
+    """Selectively checkpoints the input to the sequence of modules (layernom-attention-layernom) 
+    in a transformer layer; requires an extra forward pass on (layernom-attention-layernom)."""
     FULL = 4
     """Full activation recomputation stores the input to the transformer layer; requires the least
     amount of memory; requires an extra forward pass of the layer."""

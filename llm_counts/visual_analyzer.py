@@ -164,10 +164,10 @@ class LLMAnalyzerVisual(object):
             "consume_memory_per_gpu": memory_decode_summary_dict["consume_memory_per_gpu"],
             "prefill_flops": prefill_num_flops_model,
             "decode_flops_per_step": decode_num_flops_model,
-            "TTFT": prefill_latency_breakdown["prefill_latency"],
-            "TTOT": decode_latency_breakdown["decode_latency"],
+            "TTFT": prefill_latency_breakdown["TTFT"],
+            "TTOT": decode_latency_breakdown["TTOT"],
             "kv_cache_latency": decode_latency_breakdown["kv_cache_latency"],
-            "total_infer_latency": prefill_latency_breakdown["prefill_latency"] + decode_latency_breakdown["decode_latency"] * generate_len,
+            "total_infer_latency": prefill_latency_breakdown["TTFT"] + decode_latency_breakdown["TTOT"] * generate_len,
             "support_max_batch_total_tokens": memory_decode_summary_dict["max_batch_total_tokens"],
         }
 

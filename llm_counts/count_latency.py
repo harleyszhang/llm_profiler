@@ -335,14 +335,14 @@ class CountCausalLMLatency(object):
 
         prefill_latency_breakdown.update(
             {
-                "prefill_latency": prefill_latency,
+                "TTFT": prefill_latency,
             }
         )
 
         # 2, 解码阶段
         kv_cache_latency = self.count_latency_kv_cache_per_layer(
             bs, seq_len, generate_len, flash_attn, kv_cache_bytes
-        )
+        ) * self.num_layers_per_gpu
 
         decode_model_latency, decode_latency_breakdown = self.count_latency_model(
             bs,
@@ -357,8 +357,8 @@ class CountCausalLMLatency(object):
 
         decode_latency_breakdown.update(
             {
-                "kv_cache_latency": (kv_cache_latency) * self.num_layers_per_gpu,
-                "decode_latency": (decode_latency),
+                "kv_cache_latency": kv_cache_latency,
+                "TTOT": (decode_latency),
             }
         )
         return prefill_latency_breakdown, decode_latency_breakdown
