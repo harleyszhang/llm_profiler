@@ -1,9 +1,9 @@
 # usage: python cli_benchmark.py --model_name Qwen3-32B --gpu_name a100-sxm-80gb --batch_size 16 --generate_len 1024 --tp_size 4
-from llm_counts.utils.config import *
-from llm_counts.visual_analyzer import llm_profile
 import pandas as pd
 import argparse
-from llm_counts.benchmark_visual import SeqLenVisualizer
+from llm_counts.utils.config import *
+from llm_counts.benchmark_analyzer import llm_profile
+from llm_counts.utils.visualizer import SeqLenVisualizer
 
 
 def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", batch_size=16, generate_len=1024, tp_size=2, seq_len_list=None, **kwargs):

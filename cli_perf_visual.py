@@ -1,5 +1,5 @@
 from llm_counts.utils.config import *
-from llm_counts.visual_analyzer import llm_profile
+from framework_tools.LLMCounts.llm_counts.benchmark_analyzer import llm_profile
 import math
 
 

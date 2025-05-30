@@ -1,5 +1,5 @@
 """
-cli entry point for LLMAnalyzer, which analyzes the memory access and FLOPs of a model.
+cli entry point for LayerAnalyzer, which analyzes the memory access and FLOPs of a model.
 Usage:
     ```bash
     python -m llm_counts.llm_analyzer \
@@ -14,7 +14,7 @@ from .utils.utils import num_to_string
 from .roofline_model import roofline_analysis
 
 
-class LLMAnalyzer(object):
+class LayerAnalyzer(object):
     """Count memory access of the model and layers."""
 
     def __init__(self, model_config,  gpu_config, tp_size) -> None:
@@ -399,9 +399,6 @@ _DEPENDENCIES = {
     "down_proj": ["mlp_silu_dot"],
     "mlp_add": ["attn_add", "down_proj"],
     "output": ["mlp_add"],
-    # qwen‑specific extra kernels
-    "q_norm": ["q_proj"],
-    "k_norm": ["k_proj"],
 }
 
 class LayerGraphVisualizer:
@@ -410,22 +407,19 @@ class LayerGraphVisualizer:
     def __init__(self, model_type: str, results: dict, shapes: dict = None) -> None:
         self.model_type = model_type
         self.results = results
-        self.shapes = shapes or {}          # optional {kernel: "B×S×C"} mapping
+        if model_type == "qwen3":
+            # qwen3 模型中有额外的 q_norm 和 k_norm 层
+            _DEPENDENCIES["q_norm"] = ["q_proj"]
+            _DEPENDENCIES["k_norm"] = ["k_proj"]
+        # self.shapes = shapes or {}          # optional {kernel: "B×S×C"} mapping
 
     # --------------------------------------------------------------------- #
     # internal helpers
     # --------------------------------------------------------------------- #
     def _label(self, node: str, kernel_stats: dict) -> str:
         """Build a neat multi‑line Graphviz label, optionally with shape info."""
-        shape = self.shapes.get(node, "")
-        shape_line = f"\nShape: {shape}" if shape else ""
-        return (
-            f"{node}{shape_line}\n"
-            f"OPs: {kernel_stats['flops']}\n"
-            f"Access: {kernel_stats['memory_access']}\n"
-            f"Params: {kernel_stats.get('load_weight', 0)}\n"
-            f"Bound: {kernel_stats.get('bound', 'N/A')}"
-        )
+        label = f"{node}\nFlops: {kernel_stats['flops']}, Access: {kernel_stats['memory_access']}, \nParams: {kernel_stats.get('load_weight', 0)}, Bound: {kernel_stats.get('bound', 'N/A')}"
+        return label
 
     # --------------------------------------------------------------------- #
     # public API
@@ -440,22 +434,34 @@ class LayerGraphVisualizer:
                 node_attr={"style": "filled", "shape": "box", "fontname": "Arial"},
             )
 
-            # add nodes + edges
-            for node, deps in _DEPENDENCIES.items():
-                if node not in stage_res:          # kernel not used in this stage
-                    continue
+            # Only include nodes and deps relevant for this stage, but always include "input" and "output"
+            pruned_deps = {
+                n: [d for d in deps if d in stage_res or d in ("input","output")]
+                for n, deps in _DEPENDENCIES.items()
+                if n in stage_res or n in ("input","output")
+            }
 
+            for node, deps in pruned_deps.items():
                 color = (
                     "lightblue" if "proj" in node
                     else "plum" if "matmul" in node
                     else "lightcyan"
                 )
-                dot.node(node, label=self._label(node, stage_res[node]), fillcolor=color)
+                if node in stage_res:
+                    label = self._label(node, stage_res[node])
+                else:
+                    # default zero stats for input/output
+                    label = (
+                        f"{node}\n"
+                        "Flops: 0, Access: 0\n"
+                        "Params: 0, Bound: N/A"
+                    )
+                dot.node(node, label=label, fillcolor=color)
                 for dep in deps:
-                    if dep in stage_res:
+                    if dep in pruned_deps:
                         dot.edge(dep, node)
-
-            dot.render(f"./figures/{base_path}_{stage}", cleanup=True)
+            graph_path = f"./figures/grpah_{stage}_{base_path}"
+            dot.render(graph_path, cleanup=True)
 
 # ---------------------------------------------------------------------------
 # Command‑line entry‑point
@@ -466,10 +472,10 @@ def _main() -> None:
 
     parser = argparse.ArgumentParser(
         description="Generate a transformer layer graph (Graphviz PNG) from "
-                    "an LLMAnalyzer result JSON."
+                    "an LayerAnalyzer result JSON."
     )
     parser.add_argument("--result-json", type=Path, required=True,
-                        help="Path to the analysis‑result JSON produced by LLMAnalyzer")
+                        help="Path to the analysis‑result JSON produced by LayerAnalyzer")
     parser.add_argument("--model-type", required=True,
                         help="Model type tag, e.g. 'llama' or 'qwen3'")
     parser.add_argument("--output", default="layer_graph",
