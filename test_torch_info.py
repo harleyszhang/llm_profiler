@@ -39,7 +39,8 @@ def print_transformers_model_summary(
     """
     import math
 
-    def _human_readable(num: float, *, base: int = 1000, units=("", "K", "M", "G", "T", "P"), suffix=""):
+    def _human_readable(num: float, *, base: int = 1000, 
+                        units=("", "K", "M", "G", "T", "P"), suffix=""):
         """Convert a large number to human‑readable form (e.g. 12.3G)."""
         if num == 0:
             return f"0{suffix}"
@@ -128,7 +129,11 @@ def print_transformers_model_summary(
         fh.close()
 
 from torchviz import make_dot  # pip install torchviz graphviz
-def save_model_graph(model, input_example: torch.Tensor, file_name: str = "model_graph.svg") -> None:
+def save_model_graph(
+    model, 
+    input_example: torch.Tensor, 
+    file_name: str = "model_graph.svg"
+) -> None:
     """
     利用 torchviz 生成前向图；input_example 必须能直接送入 model。
     """
