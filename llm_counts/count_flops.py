@@ -3,7 +3,7 @@ from .utils.config import ModelConfig
 
 class CountCausalLMFlops(object):
     """CountCausalLMFlops is a class that counts the number of floating point operations (FLOPs) 
-    for a causal language model (LLM) during the forward passes."""
+    for a causal language model (LLM) during the forward passes, 支持 MoE 结构。"""
 
     def __init__(
         self,
@@ -17,6 +17,14 @@ class CountCausalLMFlops(object):
         self.intermediate_size = model_config.intermediate_size
         self.l = model_config.num_layers
         self.V = model_config.vocab_size
+        
+        # Determine if this is an MoE model
+        self.is_moe = (getattr(model_config, "num_experts", None) is not None)
+        self.is_qwen3moe = "qwen3_moe" == self.model_type
+        
+        if self.is_moe:
+            self.num_experts = getattr(model_config, "num_experts", 1)  # Default to 1 expert if not specified
+            self.num_experts_per_tok = getattr(model_config, "num_experts_per_tok", 1)
 
     def count_flops_per_layer_qkvo_proj(self, bs: int, seq_len: int) -> int:
         """Get the number of floating point operations (flops) for the forward
@@ -36,17 +44,19 @@ class CountCausalLMFlops(object):
 
         return qkvo_proj_flops
 
-    def count_flops_per_layer_mlp(self, bs: int, seq_len: int) -> int:
-        """Count two flops of matrices multiplication(two linear layers in the MLP module.)
-        eg. llama3.2-1B: self.intermediate_size = 4 * self.hidden_size
-        eg. flops_mlp(llama3.2-1B) = flops_fc1 + flops_fc2 + flops_fc3 
-                                   = 2bs(4h^2) + 2bs(4h^2) + 2bs(4h^2) = 24bsh^2
+    def count_flops_per_layer_moe_mlp(self, bs: int, seq_len: int) -> int:
+        """Count the number of floating point operations (flops) for the moe_mlp layer forward    
         """
-        flops_gate_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
-        flops_up_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
-        flops_down_proj = 2 * bs * seq_len * self.intermediate_size * self.hidden_size
-
-        return flops_gate_proj + flops_up_proj + flops_down_proj
+        if self.is_qwen3moe:
+            flops_router = 2 * bs * seq_len * self.hidden_size * self.head_dim
+            flops_experts = self.num_experts_per_tok * 3 * 2 * bs * seq_len * self.hidden_size * self.intermediate_size
+            moe_flops_per_layer = flops_router + flops_experts
+            return moe_flops_per_layer
+        else:
+            flops_gate_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
+            flops_up_proj = 2 * bs * seq_len * self.hidden_size * self.intermediate_size
+            flops_down_proj = 2 * bs * seq_len * self.intermediate_size * self.hidden_size
+            return flops_gate_proj + flops_up_proj + flops_down_proj
     
     def count_flops_per_layer_attn_kernel(self, bs: int, seq_len: int, generate_len: int) -> int:
         q_norm_flops = bs * 4 * seq_len * self.head_dim
@@ -72,7 +82,7 @@ class CountCausalLMFlops(object):
 
     def count_flops_per_layer(self, bs: int, seq_len: int, generate_len:int) -> tuple:
         flops_per_layer_qkvo_proj = self.count_flops_per_layer_qkvo_proj(bs, seq_len)
-        flops_per_layer_mlp = self.count_flops_per_layer_mlp(bs, seq_len)
+        flops_per_layer_mlp = self.count_flops_per_layer_moe_mlp(bs, seq_len)
 
         flops_per_layer_attention_kernel = self.count_flops_per_layer_attn_kernel(
             bs, seq_len, generate_len,

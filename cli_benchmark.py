@@ -1,4 +1,4 @@
-# usage: python cli_benchmark.py --model_name Qwen3-32B --gpu_name a100-sxm-80gb --batch_size 16 --generate_len 1024 --tp_size 4
+# usage: python cli_benchmark.py --model_name Qwen3-30B-A3B --gpu_name a100-sxm-80gb --batch_size 16 --generate_len 1024 --tp_size 4
 import pandas as pd
 import argparse
 from llm_counts.utils.config import *
@@ -36,7 +36,8 @@ def sweep_seq_len(model_name, gpu_name="h100-sxm-80gb", batch_size=16, generate_
             visual_flag=False,
         )
         print("=" * 80)
-        print(f"model_name: {model_name}, gpu_name: {gpu_name}, tp_size: {tp_size}, batch_size: {batch_size}, seq_len: {seq}, generate_len: {generate_len}")
+        print(f"model_name: {model_name}, gpu_name: {gpu_name}, tp_size: {tp_size}, "
+              f"batch_size: {batch_size}, seq_len: {seq}, generate_len: {generate_len}")
 
         records1.append(res1)
         records2.append(res2)
@@ -93,3 +94,12 @@ if __name__ == "__main__":
         seq_len_list=args.seq_lens,
         visual_flag=not args.no_visual,
     )
+
+"""
+python cli_benchmark.py \
+    --model_name Qwen3-30B-A3B \
+    --gpu_name a100-sxm-80gb \
+    --batch_size 16 \
+    --generate_len 1024 \
+    --tp_size 4
+"""

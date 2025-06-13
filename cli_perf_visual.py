@@ -1,5 +1,5 @@
 from llm_counts.utils.config import *
-from framework_tools.LLMCounts.llm_counts.benchmark_analyzer import llm_profile
+from llm_counts.benchmark_analyzer import llm_profile
 import math
 
 
@@ -76,6 +76,6 @@ def print_all_llm_analyzer():
 
 if __name__ == "__main__":
     # llm_profile(model_name="llama-7b", tp_size=1, print_flag=True, visual_flag=True)
-    llm_profile(model_name="llama2-70b", gpu_name = "a100-sxm-40gb", tp_size=8, 
+    llm_profile(model_name="Qwen3-30B-A3B", gpu_name = "a100-sxm-40gb", tp_size=8, 
                 batch_size = 32, seq_len = 1024, generate_len=128,
                 print_flag=True, visual_flag=True)

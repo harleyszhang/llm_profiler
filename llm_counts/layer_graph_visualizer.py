@@ -2,22 +2,29 @@
 cli entry point for LayerAnalyzer, which analyzes the memory access and FLOPs of a model.
 Usage:
     ```bash
-    python -m llm_counts.llm_analyzer \
-    --result-json path/to/results.json \
+    python -m llm_counts.layer_graph_visualizer \
+    --result-json results.json \
     --model-type qwen3 \
     --output my_layer_graph
 ```
 """
+from __future__ import annotations
 from .utils.constants import BYTES_FP16
 from .utils.config import *
 from .utils.utils import num_to_string
 from .roofline_model import roofline_analysis
+from copy import deepcopy
+from pathlib import Path
+from graphviz import Digraph
+import argparse
+from typing import Union
 
+import json
 
 class LayerAnalyzer(object):
     """Count memory access of the model and layers."""
 
-    def __init__(self, model_config,  gpu_config, tp_size) -> None:
+    def __init__(self, model_config: 'ModelConfig', gpu_config: 'GPUConfig', tp_size: int) -> None:
         self.tp_size = tp_size
         self.bandwidth, self.onchip_buffer = get_gpu_hbm_bandwidth(gpu_config) # GB/s
         self.bandwidth *= 10**9 
@@ -28,19 +35,39 @@ class LayerAnalyzer(object):
         self.intermediate_size = model_config.intermediate_size
         self.num_heads = model_config.num_heads
         self.num_kv_heads = model_config.num_kv_heads
-        self.head_dim = self.hidden_size // self.num_heads
+        self.head_dim = model_config.head_dim
+
+        self.is_moe = (getattr(model_config, "num_experts", None) is not None)
+        self.is_qwen3moe = "qwen3_moe" == self.model_type
+        
+        if self.is_moe:
+            # Default to 1 expert if not specified
+            self.num_experts = getattr(model_config, "num_experts", 1)  
+            self.num_experts_per_tok = getattr(model_config, "num_experts_per_tok", 1)
 
         # attention linear layers
-        self.linear_layers = {
-            "q_proj": [self.hidden_size, self.num_heads * self.head_dim],
-            "k_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
-            "v_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
-            "out_proj": [self.num_heads * self.head_dim, self.hidden_size],
-            
-            "gate_proj": [self.hidden_size, self.intermediate_size],
-            "up_proj": [self.hidden_size, self.intermediate_size],
-            "down_proj": [self.intermediate_size, self.hidden_size],
-        }
+        if self.is_qwen3moe:
+            self.linear_layers = {
+                "q_proj": [self.hidden_size, self.num_heads * self.head_dim],
+                "k_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+                "v_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+                "out_proj": [self.num_heads * self.head_dim, self.hidden_size],
+                # MoE结构
+                "router_gate": [self.hidden_size, self.num_experts],
+                "expert_gate_proj": [self.hidden_size, self.intermediate_size],
+                "expert_up_proj": [self.hidden_size, self.intermediate_size],
+                "expert_down_proj": [self.intermediate_size, self.hidden_size],
+            }
+        else:
+            self.linear_layers = {
+                "q_proj": [self.hidden_size, self.num_heads * self.head_dim],
+                "k_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+                "v_proj": [self.hidden_size, self.num_kv_heads * self.head_dim],
+                "out_proj": [self.num_heads * self.head_dim, self.hidden_size],
+                "gate_proj": [self.hidden_size, self.intermediate_size],
+                "up_proj": [self.hidden_size, self.intermediate_size],
+                "down_proj": [self.intermediate_size, self.hidden_size],
+            }
 
         self.results = {"decode": {}, "prefill": {}}
 
@@ -54,7 +81,6 @@ class LayerAnalyzer(object):
         store_act,
         load_kv_cache,
         store_kv_cache,
-        data_type="fp16"
     ):
         memory_access = (load_weight + load_act + store_act  + load_kv_cache + store_kv_cache)
         a_intensity, att_flops, bound = roofline_analysis(self.gpu_max_ops, 
@@ -376,12 +402,7 @@ class LayerAnalyzer(object):
 
         return self.results
     
-
-# ---------------------------------------------------------------------------
-# Transformer‑layer graph visualisation
-# ---------------------------------------------------------------------------
-
-_DEPENDENCIES = {
+BASE__DEPENDENCIES = {
     "input": [],
     "attn_norm": ["input"],
     "q_proj": ["attn_norm"],
@@ -401,91 +422,239 @@ _DEPENDENCIES = {
     "output": ["mlp_add"],
 }
 
+# 基础的 Transformer 结构（不包含 MoE 部分）
+QWEN3_MOE_DEPS = {
+    "input": [],
+    "embedding": ["input"],
+    "input_layernorm": ["embedding"],
+    "q_proj": ["input_layernorm"],
+    "k_proj": ["input_layernorm"],
+    "v_proj": ["input_layernorm"],
+
+    "qk_matmul": ["q_proj", "k_proj"],
+    "softmax": ["qk_matmul"],
+    "sv_matmul": ["softmax", "v_proj"],
+    "out_proj": ["sv_matmul"],
+    "attn_add": ["input", "out_proj"],
+    "post_attention_layernorm": ["attn_add"],
+
+    "router_gate": ["post_attention_layernorm"],
+    "router_softmax": ["router_gate"],
+    "router_top-k": ["router_softmax"],
+    "router_norm_topk_prob": ["router_top-k"],
+
+    "mlp_add": ["attn_add", "index_add_"],  # 修正顺序：attn_add 和 concat
+    "qwen3_moe_norm": ["mlp_add"],  # qwen3 模型中的额外归一化层
+    "lm_head": ["qwen3_moe_norm"],
+    "output": ["lm_head"],
+}
+
+
+def _expand_moe_deps_with_moe_mlp(num_experts: int) -> dict[str, list[str]]:
+    """为 MoE 模型展开依赖关系，使用 moe_mlp_x 作为专家节点"""
+    deps = deepcopy(QWEN3_MOE_DEPS)
+    
+    # 收集所有 moe_mlp 节点名称
+    moe_mlp_nodes = []
+    
+    # 为每个 moe_mlp 专家节点建立依赖关系
+    for i in range(num_experts):
+        moe_mlp_node = f"moe_mlp_{i}"
+        moe_mlp_nodes.append(moe_mlp_node)
+        # 每个 moe_mlp 节点从 router_gate 获取输入
+        deps[moe_mlp_node] = ["router_norm_topk_prob"]
+    
+    # concat 节点汇聚所有专家的输出
+    deps["index_add_"] = moe_mlp_nodes
+    from pprint import pprint
+    pprint(deps)
+
+    return deps
+
+
+
 class LayerGraphVisualizer:
-    """Render a transformer layer’s roofline‑analysis graph as a PNG."""
+    """Render a transformer layer's roofline-analysis graph (Graphviz PNG)."""
 
-    def __init__(self, model_type: str, results: dict, shapes: dict = None) -> None:
-        self.model_type = model_type
+    def __init__(self, model_cfg: Union[str, object], results: dict, num_experts: int = None):
         self.results = results
-        if model_type == "qwen3":
-            # qwen3 模型中有额外的 q_norm 和 k_norm 层
-            _DEPENDENCIES["q_norm"] = ["q_proj"]
-            _DEPENDENCIES["k_norm"] = ["k_proj"]
-        # self.shapes = shapes or {}          # optional {kernel: "B×S×C"} mapping
+        self.model_type = getattr(model_cfg, "model_type", model_cfg)            
 
-    # --------------------------------------------------------------------- #
-    # internal helpers
-    # --------------------------------------------------------------------- #
-    def _label(self, node: str, kernel_stats: dict) -> str:
-        """Build a neat multi‑line Graphviz label, optionally with shape info."""
-        label = f"{node}\nFlops: {kernel_stats['flops']}, Access: {kernel_stats['memory_access']}, \nParams: {kernel_stats.get('load_weight', 0)}, Bound: {kernel_stats.get('bound', 'N/A')}"
-        return label
+        if self.model_type == "qwen3_moe":
+            num_experts = getattr(model_cfg, "num_experts_per_tok", 8)
+            self.num_experts = num_experts
+            self.deps = _expand_moe_deps_with_moe_mlp(num_experts)
+            self.deps.update({"q_norm": ["q_proj"], "k_norm": ["k_proj"]})
+            self.deps["qk_matmul"] = ["q_norm", "k_norm"]
+            print(f"[Debug] Detected {num_experts} experts")
+        else:
+            self.deps = BASE__DEPENDENCIES.copy()
 
-    # --------------------------------------------------------------------- #
-    # public API
-    # --------------------------------------------------------------------- #
-    def render(self, base_path: str = "layer_graph") -> None:
-        """Generate one PNG per stage (prefill / decode) under ./figures/."""
-        from graphviz import Digraph
+    def _get_node_color(self, node: str) -> str:
+        """根据节点类型返回颜色，使用更精确的匹配规则"""
+        # 精确匹配优先
+        exact_matches = {
+            "router_gate": "gold",
+            "mlp_add": "lightcoral",
+            "attn_add": "lightcoral",
+            "concat": "orange",
+        }
+        
+        if node in exact_matches:
+            return exact_matches[node]
+        
+        # 前缀匹配
+        prefix_matches = {
+            "moe_mlp_": "lightgreen",
+            "expert": "lightgreen",
+        }
+        
+        for prefix, color in prefix_matches.items():
+            if node.startswith(prefix):
+                return color
+        
+        # 包含匹配
+        contains_matches = {
+            "proj": "lightblue",
+            "matmul": "plum",
+            "router": "gold",
+            "norm": "lightyellow",
+        }
+        
+        for keyword, color in contains_matches.items():
+            if keyword in node:
+                return color
+                
+        return "lightcyan"  # 默认颜色
 
-        for stage, stage_res in self.results.items():
+    def _format_node_label(self, node: str, data: dict = None) -> str:
+        """格式化节点标签"""
+        if data is None:
+            return f"{node}\\nFlops:0  Access:0\\nParams:0  Bound:N/A"
+        
+        flops = data.get('flops', 0)
+        memory_access = data.get('memory_access', 0)
+        load_weight = data.get('load_weight', 0)
+        bound = data.get('bound', 'N/A')
+        
+        # 为 moe_mlp 节点使用更紧凑的标签
+        node_display = node
+        if node.startswith("moe_mlp_"):
+            expert_id = node.split("_")[-1]
+            node_display = f"Expert {expert_id}"
+        
+        return (f"{node_display}\\n"
+                f"Flops:{flops}  Access:{memory_access}\\n"
+                f"Params:{load_weight}  Bound:{bound}")
+
+    def render(self, out_prefix: str = "layer_graph") -> None:
+        """渲染图形"""
+        out_dir = Path("figures")
+        out_dir.mkdir(exist_ok=True)
+
+        for stage, res in self.results.items():
+            print(f"\n[Debug] Processing stage: {stage}")
+            print(f"[Debug] Available keys: {sorted(res.keys())}")
+            
+            # 只使用在结果中实际存在的节点
+            use_nodes = self.deps.keys()
+            print(f"[Debug] Using nodes: {sorted(use_nodes)}")
+
+
+            # 创建图
             dot = Digraph(
                 format="png",
-                node_attr={"style": "filled", "shape": "box", "fontname": "Arial"},
+                node_attr={
+                    "style": "filled",
+                    "shape": "box",
+                    "fontname": "Arial",
+                    "fontsize": "9",
+                },
+                graph_attr={
+                    "rankdir": "TB",
+                    "splines": "ortho",
+                    "ranksep": "0.8",
+                    "nodesep": "0.5",
+                }
             )
+            # 添加节点
+            if self.model_type == "qwen3_moe":
+                self._add_moe_nodes_with_subgraph(dot, self.deps, res, use_nodes)
+            else:
+                self._add_regular_nodes(dot, self.deps, res, use_nodes)
 
-            # Only include nodes and deps relevant for this stage, but always include "input" and "output"
-            pruned_deps = {
-                n: [d for d in deps if d in stage_res or d in ("input","output")]
-                for n, deps in _DEPENDENCIES.items()
-                if n in stage_res or n in ("input","output")
-            }
+            # 添加边
+            self._add_edges(dot, self.deps, use_nodes)
 
-            for node, deps in pruned_deps.items():
-                color = (
-                    "lightblue" if "proj" in node
-                    else "plum" if "matmul" in node
-                    else "lightcyan"
-                )
-                if node in stage_res:
-                    label = self._label(node, stage_res[node])
-                else:
-                    # default zero stats for input/output
-                    label = (
-                        f"{node}\n"
-                        "Flops: 0, Access: 0\n"
-                        "Params: 0, Bound: N/A"
-                    )
+            # 渲染
+            png_path = out_dir / f"graph_{stage}_{out_prefix}"
+            dot.render(str(png_path), cleanup=True)
+            print(f"[LayerGraphVisualizer] Saved to {png_path}.png")
+
+    def _add_edges(self, dot: Digraph, deps: dict, use_nodes: set) -> None:
+        """添加边，支持不同样式"""
+        for node, parents in deps.items():
+            for parent in parents:
+                if parent in use_nodes:
+                    # 为专家节点的边使用不同的样式
+                    if node.startswith("moe_mlp_") or parent.startswith("moe_mlp_"):
+                        dot.edge(parent, node, color="green", style="dashed")
+                    elif node == "concat" or parent == "concat":
+                        dot.edge(parent, node, color="orange", style="bold")
+                    else:
+                        dot.edge(parent, node)
+
+    def _add_moe_nodes_with_subgraph(self, dot: Digraph, deps: dict, res: dict, use_nodes: set) -> None:
+        """为 MoE 模型添加节点，将专家节点组织在子图中"""
+        # 添加非专家节点
+        for node in use_nodes:
+            if not node.startswith("moe_mlp_"):
+                label = self._format_node_label(node, res.get(node))
+                color = self._get_node_color(node)
                 dot.node(node, label=label, fillcolor=color)
-                for dep in deps:
-                    if dep in pruned_deps:
-                        dot.edge(dep, node)
-            graph_path = f"./figures/grpah_{stage}_{base_path}"
-            dot.render(graph_path, cleanup=True)
+        # 创建专家子图
+        moe_nodes_in_use = [n for n in use_nodes if n.startswith("moe_mlp_")]
+        if moe_nodes_in_use:
+            with dot.subgraph(name="cluster_experts") as experts_subgraph:
+                experts_subgraph.attr(
+                    label="MoE Experts",
+                    style="dashed",
+                    color="green",
+                    fontsize="12",
+                    fontname="Arial Bold"
+                )
+                
+                for node in sorted(moe_nodes_in_use):
+                    label = self._format_node_label(node, res.get(node))
+                    color = self._get_node_color(node)
+                    experts_subgraph.node(node, label=label, fillcolor=color)
 
-# ---------------------------------------------------------------------------
-# Command‑line entry‑point
-# ---------------------------------------------------------------------------
+    def _add_regular_nodes(self, dot: Digraph, deps: dict, res: dict, use_nodes: set):
+        """为常规模型添加节点"""
+        for node in use_nodes:
+            if node in deps:
+                label = self._format_node_label(node, res.get(node))
+                color = self._get_node_color(node)
+                dot.node(node, label=label, fillcolor=color)
+
+
 def _main() -> None:
-    import argparse, json
-    from pathlib import Path
-
-    parser = argparse.ArgumentParser(
-        description="Generate a transformer layer graph (Graphviz PNG) from "
-                    "an LayerAnalyzer result JSON."
-    )
-    parser.add_argument("--result-json", type=Path, required=True,
-                        help="Path to the analysis‑result JSON produced by LayerAnalyzer")
-    parser.add_argument("--model-type", required=True,
-                        help="Model type tag, e.g. 'llama' or 'qwen3'")
-    parser.add_argument("--output", default="layer_graph",
-                        help="Base filename for the generated PNG(s)")
+    parser = argparse.ArgumentParser(description="Generate transformer layer graph")
+    parser.add_argument("--result-json", type=Path, required=True)
+    parser.add_argument("--model-type", required=True)
+    parser.add_argument("--num-experts", type=int, default=None)
+    parser.add_argument("--output", default="layer_graph")
     args = parser.parse_args()
 
     with args.result_json.open() as fp:
         results = json.load(fp)
 
-    LayerGraphVisualizer(args.model_type, results).render(args.output)
+    LayerGraphVisualizer(
+        model_cfg=args.model_type,
+        results=results,
+        num_experts=args.num_experts,
+    ).render(args.output)
 
-if __name__ == "__main__":  # pragma: no cover
+
+if __name__ == "__main__":
     _main()

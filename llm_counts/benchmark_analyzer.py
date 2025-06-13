@@ -20,7 +20,7 @@ from .count_flops import CountCausalLMFlops
 from .count_params import CountCausalLMParams
 from .count_memory import CountCausalLMMemory
 from .count_latency import CountCausalLMLatency
-from .layer_graph_visualizer import LayerAnalyzer
+from .layer_graph_visualizer import LayerAnalyzer, LayerGraphVisualizer
 
 logger = logging.getLogger()
 
@@ -177,10 +177,10 @@ class LayerAnalyzerVisual(object):
             llm_analyzer = LayerAnalyzer(self.model_config, self.gpu_config, tp_size=self.tp_size)
             results = llm_analyzer.analyze_model(bs=bs, seq_len=seq_len, generate_len=generate_len)
 
-            # -------------------------- 绘图：模型 graph 图示例 --------------------------
+            # # -------------------------- 绘图：模型 graph 图示例 --------------------------
+            llm_visualizer = LayerGraphVisualizer(self.model_config, results)
             base_path = f"_{self.model_config.model_name}_tp{self.tp_size}_bs{self.b}_seqlen{self.s}_genlen{self.o}.png"
-            llm_analyzer.create_layer_graph(model_type, results, base_path)
-            # Formatter.print_format_summary_dict(results, get_dict_depth(results))
+            llm_visualizer.render(base_path)
 
             # -------------------------- 绘图：Pie 图示例 --------------------------
             prefill_latency_pie_save_path = f"./figures/latency_prefill" + base_path

@@ -35,6 +35,14 @@ class CountCausalLMMemory(object):
         self.gpu_memory_in_GB = llm_configs.gpu_config.memory_GPU_in_GB * 10**9
         self.llm_params = CountCausalLMParams(self.model_config)
 
+        self.is_moe = (getattr(self.model_config, "num_experts", None) is not None)
+        self.is_qwen3moe = "qwen3_moe" == self.model_type
+        
+        if self.is_moe:
+            # Default to 1 expert if not specified
+            self.num_experts = getattr(self.model_config, "num_experts", 1)  
+            self.num_experts_per_tok = getattr(self.model_config, "num_experts_per_tok", 1)
+
     def count_memory_weight_per_gpu(self, ):
         """Get the memory of the model weights"""
         params_model = self.llm_params.count_params_model()
@@ -198,14 +206,14 @@ class CountCausalLMMemory(object):
         
         return max_act * self.act_dtype_bytes, atten_linear_layers_mac * qkvo_weight_dtype_bytes
 
-    def count_mac_per_layer_mlp(
+    def count_mac_per_layer_moe_mlp(
         self,
         bs: int,
         seq_len: int,
         mlp_weight_dtype_bytes=BYTES_FP16,
     ) -> float:
         """The `mlp` acts include the input to the two linear layers.
-        Refer to https://arxiv.org/abs/2205.05198 for details.
+        Refer to https://arxiv.org/abs/2205.05198 for details. 
         The two linear layers store their inputs with size 2bsh and 8bsh
         """
         mlp_linear_layers = {
@@ -213,7 +221,12 @@ class CountCausalLMMemory(object):
             "up_proj": [self.hidden_size, self.intermediate_size],
             "down_proj": [self.intermediate_size, self.hidden_size],
         }
+        num_experts_per_tok = getattr(self.model_config, "num_experts_per_tok", 1)
 
+        if self.is_qwen3moe:
+            # Qwen3-MoE has an additional linear layer[router] for the expert selection
+            mlp_linear_layers["gate"] = [self.hidden_size, self.head_dim]
+            
         mlp_linear_layers_mac = 0
         max_act = 0
         for _, (in_ch, out_ch) in mlp_linear_layers.items():
@@ -316,7 +329,7 @@ class CountCausalLMMemory(object):
             tokens,
             qkvo_weight_dtype_bytes=qkvo_weight_dtype_bytes,
         )
-        act_per_layer_mlp, _ = self.count_mac_per_layer_mlp(
+        act_per_layer_mlp, _ = self.count_mac_per_layer_moe_mlp(
                 bs,
                 tokens,
                 mlp_weight_dtype_bytes=mlp_weight_dtype_bytes,

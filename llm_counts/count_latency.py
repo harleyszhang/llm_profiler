@@ -112,13 +112,13 @@ class CountCausalLMLatency(object):
             memory = weight_memory + mac
 
         elif ops_type == "mlp":
-            flops = self.llm_flops.count_flops_per_layer_mlp(bs, seq_len) / self.tp_size
+            flops = self.llm_flops.count_flops_per_layer_moe_mlp(bs, seq_len) / self.tp_size
             weight_memory = (
-                self.llm_params.count_params_per_layer_mlp()
+                self.llm_params.count_params_per_layer_moe_mlp()
                 * self.bytes_per_param
                 / self.tp_size
             ) * BYTES_FP16
-            mac = (self.llm_memory.count_mac_per_layer_mlp(bs, seq_len)[1] / self.tp_size)
+            mac = (self.llm_memory.count_mac_per_layer_moe_mlp(bs, seq_len)[1] / self.tp_size)
             memory = weight_memory + mac
 
         elif ops_type == "rmsnorm":
