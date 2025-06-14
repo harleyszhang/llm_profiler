@@ -1,5 +1,4 @@
 from llm_counts.layer_graph_visualizer import LayerAnalyzer, LayerGraphVisualizer
-from llm_counts.tade_layer_graph_visualizer import TadeLayerGraphVisualizer, TadeLayerAnalyzer
 from llm_counts.utils.utils import *
 from llm_counts.utils.config import get_model_and_gpu_config_by_name
 import argparse
@@ -17,8 +16,8 @@ def test_llm_analyzer(
     model_config, gpu_config = get_model_and_gpu_config_by_name(model_name, gpu_name)
 
     # Select appropriate analyzer and visualizer
-    Analyzer = TadeLayerAnalyzer if tade else LayerAnalyzer
-    Visualizer = TadeLayerGraphVisualizer if tade else LayerGraphVisualizer
+    Analyzer = LayerAnalyzer
+    Visualizer = LayerGraphVisualizer
 
     # Analyze model
     analyzer = Analyzer(model_config, gpu_config, tp_size=tp_size)
@@ -26,7 +25,6 @@ def test_llm_analyzer(
 
     # Generate graph
     base_fname = f"{model_name.replace('/', '_')}_tp{tp_size}_bs{bs}_seqlen{seq_len}_genlen{generate_len}"
-    print(f"Rendering graph to: {base_fname}")
     Visualizer(model_config, results).render(base_fname)
 
 if __name__ == "__main__":
