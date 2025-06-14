@@ -85,20 +85,12 @@ class InferenceConfig:
 
 @dataclass
 class ParallelismConfig:
-    """dataclass module provides a decorator and functions for automatically adding 
-    generated special methods such as __init__() and __repr__() to user-defined classes.
-    """
+    """Configuration for various parallelism strategies."""
 
-    tp_size: int = (
-        1  # tensor parallelism size, Megatron-LM tensor parallelism implementation
-    )
-    pp_size: int = (
-        1  # pipeline parallelism size, Megatron-LM pipeline parallelism implementation
-    )
-    dp_size: int = 1  # data parallelism size, DeepSpeed Zero parallelism implementation
-    sp_size: int = (
-        1  # sequence parallelism size, Megatron-LM sequence parallelism implementation
-    )
+    tp_size: int = 1  # tensor parallelism size
+    pp_size: int = 1  # pipeline parallelism size
+    dp_size: int = 1  # data parallelism size
+    sp_size: int = 1  # sequence parallelism size
 
 
 @dataclass
@@ -111,14 +103,17 @@ class ModelConfig:
     num_kv_heads: Optional[int] = None
     max_seq_len: Optional[int] = None  # max sequence length
     intermediate_size: Optional[int] = None  # hidden dimension of FFN, default to 4 * hidden_size
-    model_type: str = (
-        None  # model type as tagged on Hugging Face (e.g., gpt2, opt, llama.)
-    )
-    model_name: str = (
-        None  # model name as tagged on Hugging Face (e.g., gpt2-xl, opt, llama-13b.)
-    )
+    
+    model_type: str = None 
+    model_name: str = None
 
-    # -------- post-init 逻辑 -------- #
+    # 新增 MoE 相关参数
+    moe_type: Optional[str] = None  # Type of MoE model
+    moe_intermediate_size: Optional[int] = None  # MoE FFN hidden dimension
+    num_experts: Optional[int] = None  # MoE 专家数
+    moe_layer_distribution: Optional[list] = None  # MoE层分布
+    num_experts_per_tok: int = 8 # 每个 token 选择 top-k 个专家,这里假设k=8
+
     def __post_init__(self) -> None:
         # ① KV-heads 默认 = Q-heads
         if self.num_kv_heads is None:
@@ -128,18 +123,13 @@ class ModelConfig:
         if self.intermediate_size is None:
             self.intermediate_size = self.hidden_size * 4
 
-        # ③ **核心：head_dim 计算**  
-        #    若用户 / HF config 已提供，则直接用；否则按经典公式推断
+        # ③ head_dim 计算
         if self.head_dim is None:
             self.head_dim = self.hidden_size // self.num_heads
 
-            # ④ 一致性检查（可选：遇到 MoE/GQA 可放宽）
-            assert (
-                self.hidden_size == self.head_dim * self.num_heads
-            ), (
-                "hidden_size 与 num_heads×head_dim 不一致；"
-                "若模型采用变体架构，请显式指定 head_dim"
-            )
+        # ④ MoE 相关参数处理
+        if self.moe_intermediate_size is not None:
+            self.intermediate_size = self.moe_intermediate_size
 
     @classmethod
     def from_pretrained(
@@ -147,33 +137,35 @@ class ModelConfig:
     ):
         """
         Load a Hugging Face model configuration and map it to ModelConfig.
-
-        Args:
-            pretrained_model_name_or_path (str): Path or name of the pretrained model.
-            trust_remote_code (bool): Whether to trust remote code for custom models.
-
-        Returns:
-            ModelConfig: An instance of the custom ModelConfig class.
+        自动兼容 Qwen3 MoE 及常规模型。
         """
-        # Load the Hugging Face configuration
         hf_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path, trust_remote_code=trust_remote_code
         )
 
-        # Create a ModelConfig instance by mapping the fields
+        model_type = getattr(hf_config, "model_type", None)
+        num_layers = getattr(hf_config, "num_hidden_layers", None)
+        num_heads = getattr(hf_config, "num_attention_heads", None)
+        num_kv_heads = getattr(hf_config, "num_kv_heads", None)
+        head_dim = getattr(hf_config, "head_dim", None)
+        moe_num_experts = getattr(hf_config, "num_experts", None) # 兼容 qwen3 moe 模型专家数量字段
+        moe_layer_distribution = getattr(hf_config, "moe_layer_distribution", None)
+
         return cls(
-            num_layers=hf_config.num_hidden_layers,
-            num_heads=hf_config.num_attentionum_headss,
-            hidden_size=hf_config.hidden_size,
-            vocab_size=hf_config.vocab_size,
-            num_kv_heads=getattr(hf_config, "num_kv_heads", None),
-            max_seq_len=hf_config.max_position_embeddings,
-            intermediate_size=hf_config.intermediate_size,
-            model_type=hf_config.model_type,
-            model_name=hf_config.name_or_path,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            hidden_size=getattr(hf_config, "hidden_size", None),
+            vocab_size=getattr(hf_config, "vocab_size", None),
+            num_kv_heads=num_kv_heads,
+            max_seq_len=getattr(hf_config, "max_position_embeddings", None),
+            intermediate_size=getattr(hf_config, "intermediate_size", None),
+            model_type=model_type,
+            head_dim=head_dim,
+            num_experts=moe_num_experts,
+            moe_layer_distribution=moe_layer_distribution,
         )
-
-
+    
+    
 @dataclass
 class GPUConfig:
     # 1, gpu 型号和显存大小
@@ -268,12 +260,10 @@ def get_model_and_gpu_config_by_name(
             model_config = ModelConfig.from_pretrained(model_name, trust_remote_code=True)
 
     with open(gpu_config_path, "r") as f:
-        config_json = json.load(f)  # 类似于 dict 类型
-        config_dict = config_json[gpu_name]
-        assert gpu_name in config_json, (
-            f"gpu name {gpu_name} not found in {gpu_config_path}"
-        )
-        gpu_config = GPUConfig(**config_dict)
+        config_json = json.load(f)
+        if gpu_name not in config_json:
+            raise ValueError(f"gpu name {gpu_name} not found in {gpu_config_path}")
+        gpu_config = GPUConfig(**config_json[gpu_name])
 
     return model_config, gpu_config
 
@@ -292,7 +282,7 @@ def get_TFLOPS_per_gpu(
     elif data_type == "fp16":
         gemm_TFOPS = gpu_config.peak_fp16_TFLOPS
     else:
-        print("weight_bits and activation_bits must be 8, or 16!")
+        raise ValueError("data_type must be 'fp16' or 'int8'")
 
     return gemm_TFOPS * flops_efficiency
 
