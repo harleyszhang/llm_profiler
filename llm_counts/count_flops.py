@@ -48,7 +48,7 @@ class CountCausalLMFlops(object):
         """Count the number of floating point operations (flops) for the moe_mlp layer forward    
         """
         if self.is_qwen3moe:
-            flops_router = 2 * bs * seq_len * self.hidden_size * self.head_dim
+            flops_router = 2 * bs * seq_len * self.hidden_size * self.num_experts
             flops_experts = self.num_experts_per_tok * 3 * 2 * bs * seq_len * self.hidden_size * self.intermediate_size
             moe_flops_per_layer = flops_router + flops_experts
             return moe_flops_per_layer

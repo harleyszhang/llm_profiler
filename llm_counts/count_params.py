@@ -55,7 +55,7 @@ class CountCausalLMParams(object):
         gate_proj / up_proj / down_proj params: hidden_size * intermediate_size
         """
         if self.is_qwen3moe:
-            params_router = self.hidden_size * self.head_dim
+            params_router = self.hidden_size * self.num_experts
             expert_counts = self.num_experts_per_tok if is_active else self.num_experts
             params_experts = expert_counts * 3 * self.hidden_size * self.intermediate_size
             return params_router + params_experts
