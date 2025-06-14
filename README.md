@@ -4,14 +4,14 @@ llm theoretical performance analysis tools and support params, flops, memory and
 
 ## 主要功能
 
-- 支持 qwen2.5、qwen3 dense 系列模型。
+- 支持 `llama3`、`qwen2.5`、`qwen3 dense`、`qwen3 moe` 系列模型。
 - 支持张量并行推理模式。
 - 支持 `A100`、`V100`、`T4` 等硬件以及主流 decoder-only 的自回归模型，可自行在配置文件中增加。
 - 支持分析性能瓶颈，不同 `layer` 是 `memory bound` 还是 `compute bound`，以及 `kv_cache` 的性能瓶颈。
 - 支持输出每层和整个模型的参数量、计算量，内存和 `latency`。
 - 推理时支持预填充和解码阶段分别计算内存和 latency、以及理论支持的最大 `bs` 等等。
 - 支持设置计算效率、内存读取效率（不同推理框架可能不一样，这个设置好后，可推测输出实际值）。
-- 推理性能理论分析结果的格式化输出。
+- 推理性能理论分析结果的格式化输出， 模型结构可视化。
 
 ## 如何使用
 
@@ -148,6 +148,8 @@ def llm_profile(model_name="llama-13b",
 
 ## 模型结构可视化
 
+### llama2-70b 
+
 llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20，prefill 阶段:
 
 <div align="center">
@@ -158,6 +160,20 @@ llama2-70b 模型，A100-SXM40GB，tp_size = 8 和 bs = 20， decode 阶段:
 
 <div align="center">
 <img src="images/grpah_decode_llama2-70b_tp8_bs32_seqlen1024_genlen128.png" width="50%" alt="decode 阶段">
+</div>
+
+### Qwen3-30B-A3B 模型
+
+Qwen3-30B-A3B 模型，a100-sxm-80gb，tp_size = 8, bs = 16，seq_len = 600，prefill 阶段:
+
+<div align="center">
+<img src="images/graph_prefill_Qwen3-30B-A3B_tp1_bs16_seqlen600_genlen128.png" width="100%" alt="prefill 阶段">
+</div>
+
+Qwen3-30B-A3B 模型，a100-sxm-80gb，tp_size = 1，bs = 16，seq_len = 600，decode 阶段:
+
+<div align="center">
+<img src="images/graph_decode_Qwen3-30B-A3B_tp1_bs16_seqlen600_genlen128.png" width="100%" alt="decode 阶段">
 </div>
 
 ## 模型参数量、计算量、latency 分布
